@@ -1,0 +1,805 @@
+---
+title: "ACS notebook"
+author: "Matthew Cvitanovich"
+output:
+  html_document:
+    df_print: paged
+    theme: paper
+    code_folding: hide
+  html_notebook: null
+editor_options:
+  chunk_output_type: console
+---
+
+<style>
+  .Notes {
+    background-color: #FDF9E4;
+    padding: 10px;
+    border: 1px solid;
+    border-color: #F7EBCF;
+    margin-left: 50px;
+    margin-right: 50px;
+    border-radius: 5px;
+    color: #866E42;}
+</style>
+
+This is a proof-of-concept notebook exemplifying how one might obtain 
+estimates of the following probabilities for an individual based on their age 
+(category), sex, and race/ethnicity using data from the 
+[American Census Survey (ACS)](https://www.census.gov/programs-surveys/acs).    
+  **(1)** highest level of education achieved  
+  **(2)** having experienced income below/above the Federal 
+poverty level within the preceding 12 months 
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(tidycensus)
+library(dplyr)
+library(stringr)
+library(readr)
+library(ggplot2)
+
+census_api_key(Sys.getenv('CENSUS_KEY'))
+
+# load Census concepts
+v19 <- load_variables(2019, "acs5", cache = TRUE)
+```
+
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+# Get table IDs
+###############
+
+# Educational Attainment
+ed_vars <- v19 %>% 
+  filter(grepl('SEX BY EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER', concept)) %>% 
+  mutate(name_stub = substr(name, 1, 7)) %>% 
+  distinct(concept, name_stub)
+
+# Age
+age_vars <- v19 %>% 
+  filter(grepl('SEX BY AGE BY EDUCATIONAL ATTAINMENT FOR THE POPULATION 18 YEARS AND OVER', concept)) %>% 
+  mutate(name_stub = substr(name, 1, 7)) %>% 
+  distinct(concept, name_stub)
+
+# Poverty
+pov_vars <- v19 %>% 
+  filter(grepl('POVERTY', concept)) %>% 
+  mutate(name_stub = substr(name, 1, 7)) %>% 
+  distinct(concept, name_stub)
+```
+
+
+
+```{r message=FALSE, warning=FALSE}
+
+##################################################################
+#                   Define API Requests
+##################################################################
+
+
+# Race/ethnicity-specific proportions of education by (tract, sex)
+# ----------------------------------------------------------------
+request_ed_by_tract <- function(raceth){
+  varlist <- c('C15002A', 'C15002B', 'C15002C', 'C15002D',
+               'C15002E', 'C15002F', 'C15002G', 'C15002I')
+  
+  names(varlist) <- c('white', 'black', 'alaskan', 'asian', 
+                      'hawaian', 'other', 'multirace', 'hispanic')
+  
+  df <- get_acs(geography = "tract", 
+                   survey = 'acs5',
+                   variables = c(total = paste0(varlist[raceth], "_001"),
+                                 # male
+                                 male = paste0(varlist[raceth], "_002"),
+                                 male_less_hs = paste0(varlist[raceth], "_003"),
+                                 male_hs_graduate = paste0(varlist[raceth], "_004"),
+                                 male_some_college = paste0(varlist[raceth], "_005"),
+                                 male_college_graduate = paste0(varlist[raceth], "_006"),
+                                 # female
+                                 female = paste0(varlist[raceth], "_007"),
+                                 female_less_hs = paste0(varlist[raceth], "_008"),
+                                 female_hs_graduate = paste0(varlist[raceth], "_009"),
+                                 female_some_college = paste0(varlist[raceth], "_010"),
+                                 female_college_graduate = paste0(varlist[raceth], "_011")),
+                    state='TX',
+                    county='Tarrant',
+                    year = 2019,
+                    moe_level=95)
+  
+  return(df)
+}
+
+
+
+# Race/ethnicity-specific proportions of age by by (tract, sex)
+# -------------------------------------------------------------
+# ... B01001A == "Sex by Age" ... with smaller age categories
+request_age_by_tract <- function(raceth){
+  varlist <- c('B01001A', 'B01001B', 'B01001C', 'B01001D',
+               'B01001E', 'B01001F', 'B01001G', 'B01001I')
+  
+  names(varlist) <- c('white', 'black', 'alaskan', 'asian', 
+                      'hawaian', 'other', 'multirace', 'hispanic')
+  
+  df <- get_acs(geography = "tract", 
+                   survey = 'acs5',
+                   variables = c(total      = paste0(varlist[raceth], "_001"),
+                                 # male
+                                 male       = paste0(varlist[raceth], "_002"),
+                                 male_25_29 = paste0(varlist[raceth], "_009"),
+                                 male_30_34 = paste0(varlist[raceth], "_010"),
+                                 male_35_44 = paste0(varlist[raceth], "_011"),
+                                 male_45_54 = paste0(varlist[raceth], "_012"),
+                                 male_55_64 = paste0(varlist[raceth], "_013"),
+                                 male_65_74 = paste0(varlist[raceth], "_014"),
+                                 male_75_84 = paste0(varlist[raceth], "_015"),
+                                 male_85_pl = paste0(varlist[raceth], "_016"),
+                                 # female
+                                 female       = paste0(varlist[raceth], "_017"),
+                                 female_25_29 = paste0(varlist[raceth], "_024"),
+                                 female_30_34 = paste0(varlist[raceth], "_025"),
+                                 female_35_44 = paste0(varlist[raceth], "_026"),
+                                 female_45_54 = paste0(varlist[raceth], "_027"),
+                                 female_55_64 = paste0(varlist[raceth], "_028"),
+                                 female_65_74 = paste0(varlist[raceth], "_029"),
+                                 female_75_84 = paste0(varlist[raceth], "_030"),
+                                 female_85_pl = paste0(varlist[raceth], "_031")
+                                 ),
+                    state='TX',
+                    county='Tarrant',
+                    year = 2019,
+                    moe_level=95)
+  
+  return(df)
+}
+
+
+
+# Race/ethnicity-specific proportions of poverty status by by (tract, sex, age)
+# -----------------------------------------------------------------------------
+# https://data.census.gov/cedsci/table?q=B17001
+request_below_poverty_by_tract <- function(raceth){
+  varlist <- c('B17001A', 'B17001B', 'B17001C', 'B17001D',
+               'B17001E', 'B17001F', 'B17001G', 'B17001I')
+  
+  names(varlist) <- c('white', 'black', 'alaskan', 'asian', 
+                      'hawaian', 'other', 'multirace', 'hispanic')
+  
+  below <- get_acs(geography = "tract", 
+                   survey = 'acs5',
+                   variables = c(total      = paste0(varlist[raceth], "_002"),
+                                 # male
+                                 male       = paste0(varlist[raceth], "_003"),
+                                 male_25_34 = paste0(varlist[raceth], "_011"),
+                                 male_35_44 = paste0(varlist[raceth], "_012"),
+                                 male_45_54 = paste0(varlist[raceth], "_013"),
+                                 male_55_64 = paste0(varlist[raceth], "_014"),
+                                 male_65_74 = paste0(varlist[raceth], "_015"),
+                                 male_75_pl = paste0(varlist[raceth], "_016"),
+                                 # female
+                                 female       = paste0(varlist[raceth], "_017"),
+                                 female_25_34 = paste0(varlist[raceth], "_025"),
+                                 female_35_44 = paste0(varlist[raceth], "_026"),
+                                 female_45_54 = paste0(varlist[raceth], "_027"),
+                                 female_55_64 = paste0(varlist[raceth], "_028"),
+                                 female_65_74 = paste0(varlist[raceth], "_029"),
+                                 female_75_pl = paste0(varlist[raceth], "_030")
+                                 ),
+                   state='TX',
+                   county='Tarrant',
+                   year = 2019,
+                   moe_level=95) %>% 
+    mutate(poverty_status = 'Below')
+  
+  
+  above <- get_acs(geography = "tract", 
+                   survey = 'acs5',
+                   variables = c(total      = paste0(varlist[raceth], "_031"),
+                                 # male
+                                 male       = paste0(varlist[raceth], "_032"),
+                                 male_25_34 = paste0(varlist[raceth], "_040"),
+                                 male_35_44 = paste0(varlist[raceth], "_041"),
+                                 male_45_54 = paste0(varlist[raceth], "_042"),
+                                 male_55_64 = paste0(varlist[raceth], "_043"),
+                                 male_65_74 = paste0(varlist[raceth], "_044"),
+                                 male_75_pl = paste0(varlist[raceth], "_045"),
+                                 # female
+                                 female       = paste0(varlist[raceth], "_046"),
+                                 female_25_34 = paste0(varlist[raceth], "_054"),
+                                 female_35_44 = paste0(varlist[raceth], "_055"),
+                                 female_45_54 = paste0(varlist[raceth], "_056"),
+                                 female_55_64 = paste0(varlist[raceth], "_057"),
+                                 female_65_74 = paste0(varlist[raceth], "_058"),
+                                 female_75_pl = paste0(varlist[raceth], "_059")
+                                 ),
+                   state='TX',
+                   county='Tarrant',
+                   year = 2019,
+                   moe_level=95) %>% 
+    mutate(poverty_status = 'Above')
+  
+  df <- rbind(below, above)
+  
+  return(df)
+}
+
+
+
+
+##################################################################
+#                   Process API Requests
+##################################################################
+
+
+# Race/ethnicity-specific proportions of (education, sex) by tract
+# ----------------------------------------------------------------
+create_educational_attainment_df <- function(){
+  # Educational Attainment
+  white <- request_ed_by_tract('white') %>% mutate(race = 'white')
+  black <- request_ed_by_tract('black') %>% mutate(race = 'black')
+  alaskan <- request_ed_by_tract('alaskan') %>% mutate(race = 'alaskan')
+  asian <- request_ed_by_tract('asian') %>% mutate(race = 'asian')
+  hawaian <- request_ed_by_tract('hawaian') %>% mutate(race = 'hawaian')
+  other <- request_ed_by_tract('other') %>% mutate(race = 'other')
+  multirace <- request_ed_by_tract('multirace') %>% mutate(race = 'multirace')
+  hispanic <- request_ed_by_tract('hispanic') %>% mutate(race = 'hispanic')
+  
+  # combine all requests
+  ed <- rbind(white, black, alaskan, asian, hawaian, other, multirace, hispanic)
+  
+  # extract Census tract from text
+  ed <- ed %>% 
+    mutate(
+      tract = str_extract(NAME, '\\d+\\.*\\d*'),
+      sex = case_when(
+        grepl('female', variable) ~ 'Female',
+        grepl('male', variable)   ~ 'Male',
+        TRUE ~ 'Total'),
+      education = case_when(
+        grepl('less_hs', variable)   ~ 'Less than high school',
+        grepl('hs_graduate', variable)   ~ 'High school graduate',
+        grepl('some_college', variable)   ~ 'Some college',
+        grepl('college_graduate', variable)   ~ 'College graduate',
+        TRUE ~ 'Total')
+      )
+  
+  
+  ed <- ed %>% 
+    left_join(ed %>%
+                # the denominators need to be adjusted to that they only consider
+                #   the age categories of interest
+                # ... doesn't need to happen here but for consistency with other code
+                # ... I've left this part in
+                filter(education != 'Total' & sex != 'Total') %>% 
+                group_by(tract, sex, race) %>% 
+                mutate(denom = sum(estimate)) %>% 
+                distinct(tract, sex, race, denom)
+              ) %>% 
+    left_join(ed %>% 
+                filter(education == 'Total' & sex != 'Total') %>% 
+                distinct(tract, sex, race, moe) %>% 
+                rename(moe_denom = moe)
+              ) %>% 
+    mutate(proportion = estimate/denom,
+           proportion_moe = abs(sqrt((moe^2) - ((estimate/denom)^2 * moe_denom)))/denom,
+           proportion_moe = ifelse(education=='Total', NA_real_, proportion_moe)
+           ) %>% 
+    # clean up
+    rename(geoid=GEOID, name=NAME)
+  
+  return(ed)
+  
+}
+
+
+
+# Race/ethnicity-specific proportions of (age, sex) by tract
+# ----------------------------------------------------------
+create_age_df <- function(){
+
+  # Age
+  white <- request_age_by_tract('white') %>% mutate(race = 'white')
+  black <- request_age_by_tract('black') %>% mutate(race = 'black')
+  alaskan <- request_age_by_tract('alaskan') %>% mutate(race = 'alaskan')
+  asian <- request_age_by_tract('asian') %>% mutate(race = 'asian')
+  hawaian <- request_age_by_tract('hawaian') %>% mutate(race = 'hawaian')
+  other <- request_age_by_tract('other') %>% mutate(race = 'other')
+  multirace <- request_age_by_tract('multirace') %>% mutate(race = 'multirace')
+  hispanic <- request_age_by_tract('hispanic') %>% mutate(race = 'hispanic')
+  
+  # combine all requests
+  age <- rbind(white, black, alaskan, asian, hawaian, other, multirace, hispanic)
+  
+  # extract Census tract from text
+  age <- age %>% 
+    mutate(
+      tract = str_extract(NAME, '\\d+\\.*\\d*'),
+      sex = case_when(
+        grepl('female', variable) ~ 'Female',
+        grepl('male', variable)   ~ 'Male',
+        TRUE ~ 'Total'),
+      agecat = case_when(
+        grepl('25_29', variable)   ~ '25-29',
+        grepl('30_34', variable)   ~ '30-34',
+        grepl('35_44', variable)   ~ '35-44',
+        grepl('45_54', variable)   ~ '45-54',
+        grepl('55_64', variable)   ~ '55-64',
+        grepl('65_74', variable)   ~ '65-74',
+        grepl('75_84', variable)   ~ '75-84',
+        grepl('85_pl', variable)   ~ '>=85',
+        TRUE ~ 'Total')
+      )
+  
+  
+  age <- age %>% 
+    # derive proportions and their MOEs
+    left_join(age %>% 
+                # the denominators need to be adjusted to that they only consider
+                #   the age categories of interest
+                filter(agecat != 'Total' & sex != 'Total') %>% 
+                group_by(tract, sex, race) %>% 
+                mutate(denom = sum(estimate)) %>% 
+                distinct(tract, sex, race, denom)
+              ) %>% 
+    left_join(age %>% 
+                filter(agecat == 'Total' & sex != 'Total') %>% 
+                distinct(tract, sex, race, moe) %>% 
+                rename(moe_denom = moe)
+              ) %>% 
+    mutate(proportion = estimate/denom,
+           proportion_moe = abs(sqrt((moe^2) - ((estimate/denom)^2 * moe_denom)))/denom,
+           proportion_moe = ifelse(agecat=='Total', NA_real_, proportion_moe),
+           # proportions for 'Total' fields will no longer == 1.0
+           # ... reset that for sanity's sake
+           proportion = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, proportion),
+           proportion_moe = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, proportion_moe),
+           denom = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, denom),
+           moe_denom = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, moe_denom)
+           ) %>% 
+    # clean up
+    rename(geoid=GEOID, name=NAME)
+  
+  return(age)
+  
+}
+
+
+# Race/ethnicity-specific proportions of poverty status by by (tract, sex, age)
+# -----------------------------------------------------------------------------
+create_poverty_status_df <- function(){
+  # Educational Attainment
+  white <- request_below_poverty_by_tract('white') %>% mutate(race = 'white')
+  black <- request_below_poverty_by_tract('black') %>% mutate(race = 'black')
+  alaskan <- request_below_poverty_by_tract('alaskan') %>% mutate(race = 'alaskan')
+  asian <- request_below_poverty_by_tract('asian') %>% mutate(race = 'asian')
+  hawaian <- request_below_poverty_by_tract('hawaian') %>% mutate(race = 'hawaian')
+  other <- request_below_poverty_by_tract('other') %>% mutate(race = 'other')
+  multirace <- request_below_poverty_by_tract('multirace') %>% mutate(race = 'multirace')
+  hispanic <- request_below_poverty_by_tract('hispanic') %>% mutate(race = 'hispanic')
+  
+  # combine all requests
+  pov <- rbind(white, black, alaskan, asian, hawaian, other, multirace, hispanic)
+  
+  # extract Census tract from text
+  pov <- pov %>% 
+    mutate(
+      tract = str_extract(NAME, '\\d+\\.*\\d*'),
+      sex = case_when(
+        grepl('female', variable) ~ 'Female',
+        grepl('male', variable)   ~ 'Male',
+        TRUE ~ 'Total'),
+      agecat = case_when(
+        grepl('25_34', variable)   ~ '25-34',
+        grepl('35_44', variable)   ~ '35-44',
+        grepl('45_54', variable)   ~ '45-54',
+        grepl('55_64', variable)   ~ '55-64',
+        grepl('65_74', variable)   ~ '65-74',
+        grepl('75_pl', variable)   ~ '>=75',
+        TRUE ~ 'Total')
+      )
+  
+  
+  pov <- pov %>% 
+    # derive proportions and their MOEs
+    left_join(pov %>% 
+                # the denominators need to be adjusted to that they only consider
+                #   the age categories of interest
+                #   and because the ACS supplies them them by poverty-status 
+                #   (we need to aggregate over status)
+                filter(agecat != 'Total' & sex != 'Total') %>% 
+                group_by(tract, sex, race) %>% 
+                mutate(denom = sum(estimate)) %>% 
+                distinct(tract, sex, race, denom)
+              ) %>% 
+    left_join(age %>% 
+                filter(agecat == 'Total' & sex != 'Total') %>% 
+                distinct(tract, sex, race, moe) %>% 
+                rename(moe_denom = moe)
+              ) %>% 
+    mutate(proportion = estimate/denom,
+           proportion_moe = abs(sqrt((moe^2) - ((estimate/denom)^2 * moe_denom)))/denom,
+           proportion_moe = ifelse(agecat=='Total', NA_real_, proportion_moe),
+           # proportions for 'Total' fields will no longer == 1.0
+           # ... reset that for sanity's sake
+           proportion = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, proportion),
+           proportion_moe = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, proportion_moe),
+           denom = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, denom),
+           moe_denom = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, moe_denom)
+           ) %>% 
+    # clean up
+    rename(geoid=GEOID, name=NAME)
+  
+  return(pov)
+  
+}
+```
+
+
+
+```{r message=FALSE, warning=FALSE}
+dir.create(file.path('data'))
+
+ed_filepath  <- file.path('data', 'educational_attainment.csv')
+age_filepath <- file.path('data', 'agecat.csv')
+pov_filepath <- file.path('data', 'povertyt_status_12m.csv')
+
+# Get educational attainment data
+# -------------------------------
+if(file.exists(ed_filepath)){
+  ed <- vroom::vroom(ed_filepath,
+                     col_types = cols(tract=col_character()))
+} else{
+  ed <- create_educational_attainment_df()
+  
+  # write out
+  readr::write_excel_csv(ed, ed_filepath)
+}
+
+
+# Get age category data
+# ---------------------
+if(file.exists(age_filepath)){
+  age <- vroom::vroom(age_filepath,
+                     col_types = cols(tract=col_character()))
+} else {
+  age <- create_age_df()
+  
+  # write out
+  readr::write_excel_csv(age, age_filepath)
+}
+
+
+# Get poverty status data
+# -----------------------
+if(file.exists(pov_filepath)){
+  pov <- vroom::vroom(pov_filepath,
+                     col_types = cols(tract=col_character()))
+} else {
+  pov <- create_poverty_status_df()
+  
+  # write out
+  readr::write_excel_csv(pov, pov_filepath)
+}
+
+
+
+# READ tract as CHARACTER!!!
+```
+
+
+#### Example without breaking down by age-category {.tabset}
+##### Absolute numbers
+```{r message=FALSE, warning=FALSE}
+dat <- ed %>% 
+  filter(tract == 1141.03) %>% 
+  filter(sex == 'Male') %>% 
+  filter(race %in% c('white', 'black', 'hispanic')) %>% 
+  filter(education != 'Total') %>% 
+  ungroup()
+  
+
+dat$education <- factor(dat$education, 
+                        levels=c('Less than high school', 
+                                 'High school graduate', 
+                                 'Some college', 
+                                 'College graduate'))
+
+# stacked bar chart
+ggplot(dat,
+       aes(fill=race, y=estimate, x=education, label=estimate)) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_errorbar(aes(ymin = estimate - moe, 
+                    ymax = estimate + moe), width = 0.2) +
+  geom_text(size = 2.8,
+            position = position_stack(vjust = 0.5)) +
+  facet_wrap(~race, ncol = 1) + 
+  coord_flip() +
+  labs(
+    x = 'Highest Level of Education Achieved',
+    y = 'Number of persons',
+    title = 'Male -- Tract 1141.03',
+    fill = 'Age Category') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
+```
+
+
+##### Proportions
+What is the likelihood of educational attainment XXX for a "white" male residing 
+in Census tract 1141.03 during 2019? 
+```{r message=FALSE, warning=FALSE}
+# stacked bar chart
+ggplot(dat,
+       aes(fill=race, y=proportion, x=education, label=round(proportion, 2))) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_errorbar(aes(ymin = proportion - proportion_moe, 
+                    ymax = proportion + proportion_moe), width = 0.2) +
+  geom_text(size = 2.8,
+            position = position_stack(vjust = 0.5)) +
+  facet_wrap(~race, ncol = 1) + 
+  coord_flip() +
+  labs(
+    x = 'Highest Level of Education Achieved',
+    y = 'Proportion',
+    title = 'Male -- Tract 1141.03',
+    fill = 'Age Category') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
+```
+<p class="Notes">
+<strong>Notes</strong>
+The 95% confidence limits were derived from the ACS handbook using the formula: 
+$MOE_p = \frac{\pm \sqrt{MOE_{num}^{2} - [(\frac{X_{num}}{X_{den}}^2) * MOE_{den}^2]}}{X_{num}}$
+</p>
+
+
+
+#### Calculate the estimated probabilities
+*First*, we snag the proportion of the population, in 2019 (in each Census tract, 
+sex, and race) with each available category of "highest educational attainment".
+High School education (highest attainment).  
+  
+*Then*, we snag the proportion of the population (again, by Census tract, 
+sex, and race) that fell into each available age category.  
+  
+*Finally*, we obtain the estimated probability of education attainment level XXX 
+by multiplying these probabilities (proportions).  
+
+```{r message=FALSE, warning=FALSE}
+estimates <- ed %>% 
+  group_by(tract, sex, race, education) %>% 
+  summarise(num = sum(estimate)) %>% 
+  left_join(age %>% 
+              filter(agecat!='Total') %>% 
+              group_by(tract, sex, race) %>% 
+              summarize(denom = sum(estimate))
+            ) %>% 
+  mutate(p = num/denom) %>% 
+  filter(education != 'Total') %>% 
+  ungroup()
+
+# add probabilities for age categories, within (tract, sex, race)
+q <- age %>% 
+  filter(agecat!='Total') %>% 
+  group_by(tract, agecat, sex, race) %>% 
+  summarize(n = sum(estimate)) %>% 
+  ungroup()
+  
+q <- tidyr::pivot_wider(q,
+                   id_cols=c(tract, sex, race),
+                   names_from=agecat, 
+                   names_prefix='age_',
+                   names_repair='universal',
+                   values_from=n)
+
+estimates <- estimates %>% 
+  left_join(q) %>% 
+  # p = probability of educational attainment for (tract, sex, race)
+  #     * probability of age-category for (tract, sex, race)
+  mutate(age_25.29 = p*(age_25.29/denom),
+         age_30.34 = p*(age_30.34/denom),
+         age_35.44 = p*(age_35.44/denom),
+         age_45.54 = p*(age_45.54/denom),
+         age_55.64 = p*(age_55.64/denom),
+         age_65.74 = p*(age_65.74/denom),
+         age_75.84 = p*(age_75.84/denom),
+         age_..85  = p*(age_..85/denom)
+  )
+
+```
+
+
+  
+#### Examples {.tabset}
+##### Males
+What is the likelihood of educational attainment XXX for a "white" male residing 
+in Census tract 1141.03 during 2019 (given their age at run-time)?  
+```{r message=FALSE, warning=FALSE}
+# example
+z <- estimates %>% 
+  filter(tract == 1141.03) %>% 
+  filter(sex == 'Male') %>% 
+  filter(race %in% c('white', 'black', 'hispanic')) %>% 
+  ungroup() %>% 
+  select(-c(tract, sex, num, denom, p))
+
+#sum(z) == 1.0 ... sanity check!!
+
+# pivot data for plotting
+agefields <- z %>% select(-c(education, race)) %>% names()
+dat <- tidyr::pivot_longer(z, cols=all_of(agefields))
+dat <- dat %>% 
+  mutate(name = str_replace(name, '\\.\\.', ''),
+         name = str_replace(name, 'age', ''),
+         name = str_replace(name, '\\.', '-'),
+         name = str_replace(name, '_', ''),
+         name = as.factor(name))
+
+dat$education <- factor(dat$education, 
+                        levels=c('Less than high school', 
+                                 'High school graduate', 
+                                 'Some college', 
+                                 'College graduate'))
+
+# stacked bar chart
+ggplot(dat,
+       aes(fill=name, y=value, x=education, label=round(value, 2))) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_text(size = 2.8,
+            position = position_stack(vjust = 0.5)) +
+  facet_wrap(~race, ncol = 1) + 
+  coord_flip() +
+  labs(
+    x = 'Highest Level of Education Achieved',
+    y = 'Proportion',
+    title = 'Male -- Tract 1141.03',
+    fill = 'Age Category') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
+```
+<p class="Notes">
+<strong>Notes</strong>
+Appropriate margins of error, standard errors, and confidence intervals can 
+be derived as described in the ACS handbook.
+</p>
+
+
+
+##### Females
+What about for a female?
+```{r message=FALSE, warning=FALSE}
+# example
+z <- estimates %>% 
+  filter(tract == 1141.03) %>% 
+  filter(sex == 'Female') %>% 
+  filter(race %in% c('white', 'black', 'hispanic')) %>% 
+  ungroup() %>% 
+  select(-c(tract, sex, num, denom, p))
+
+#sum(z) == 1.0 ... sanity check!!
+
+# pivot data for plotting
+agefields <- z %>% select(-c(education, race)) %>% names()
+dat <- tidyr::pivot_longer(z, cols=all_of(agefields))
+dat <- dat %>% 
+  mutate(name = str_replace(name, '\\.\\.', ''),
+         name = str_replace(name, 'age', ''),
+         name = str_replace(name, '\\.', '-'),
+         name = str_replace(name, '_', ''),
+         name = as.factor(name))
+
+dat$education <- factor(dat$education, 
+                        levels=c('Less than high school', 
+                                 'High school graduate', 
+                                 'Some college', 
+                                 'College graduate'))
+
+# stacked bar chart
+ggplot(dat,
+       aes(fill=name, y=value, x=education, label=round(value, 2))) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_text(size = 2.8,
+            position = position_stack(vjust = 0.5)) +
+  facet_wrap(~race, ncol = 1) + 
+  coord_flip() +
+  labs(
+    x = 'Highest Level of Education Achieved',
+    y = 'Proportion',
+    title = 'Female -- Tract 1141.03',
+    fill = 'Age Category') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
+```
+<p class="Notes">
+<strong>Notes</strong>
+Appropriate margins of error, standard errors, and confidence intervals can 
+be derived as described in the ACS handbook.
+</p>
+
+
+
+##### Validation
+As a sanity check, see the [Census Reporter](https://censusreporter.org/profiles/14000US48439114103-census-tract-114103-tarrant-tx/).
+
+
+
+#### Example using poverty status in the past 12 months {.tabset}
+The data for these plots derives entirely from tables 
+[B17001*](https://data.census.gov/cedsci/table?q=B17001).  
+
+##### Males
+```{r message=FALSE, warning=FALSE}
+dat <- pov %>% 
+  filter(poverty_status != 'Total') %>% 
+  # example data
+  filter(tract == 1141.03) %>% 
+  filter(sex == 'Male') %>% 
+  filter(race %in% c('white', 'black', 'hispanic')) %>% 
+  filter(agecat != 'Total') %>% 
+  select(agecat, race, poverty_status, proportion, proportion_moe)
+
+
+# stacked bar chart
+ggplot(dat,
+       aes(fill=agecat, y=proportion, x=poverty_status, label=round(proportion, 2))) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_text(size = 2.8,
+            position = position_stack(vjust = 0.5)) +
+  facet_wrap(~race, ncol = 1) + 
+  coord_flip() +
+  labs(
+    x = 'Poverty Status in the Past 12 Months',
+    y = 'Proportion',
+    title = 'Male -- Tract 1141.03',
+    fill = 'Age Category') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
+```
+<p class="Notes">
+<strong>Notes</strong>
+Appropriate margins of error, standard errors, and confidence intervals can 
+be derived as described in the ACS handbook (the MOEs calculated, thus far,
+correctly account for the fact that ages < 25 years were left out ... but 
+they do **not** correctly account the the aggregation of estimates over poverty
+status).
+</p>
+
+
+##### Females
+```{r message=FALSE, warning=FALSE}
+dat <- pov %>% 
+  filter(poverty_status != 'Total') %>% 
+  # example data
+  filter(tract == 1141.03) %>% 
+  filter(sex == 'Female') %>% 
+  filter(race %in% c('white', 'black', 'hispanic')) %>% 
+  filter(agecat != 'Total') %>% 
+  select(agecat, race, poverty_status, proportion, proportion_moe)
+
+
+# stacked bar chart
+ggplot(dat,
+       aes(fill=agecat, y=proportion, x=poverty_status, label=round(proportion, 2))) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_text(size = 2.8,
+            position = position_stack(vjust = 0.5)) +
+  facet_wrap(~race, ncol = 1) + 
+  coord_flip() +
+  labs(
+    x = 'Poverty Status in the Past 12 Months',
+    y = 'Proportion',
+    title = 'Female -- Tract 1141.03',
+    fill = 'Age Category') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
+```
+<p class="Notes">
+<strong>Notes</strong>
+Appropriate margins of error, standard errors, and confidence intervals can 
+be derived as described in the ACS handbook (the MOEs calculated, thus far,
+correctly account for the fact that ages < 25 years were left out ... but 
+they do **not** correctly account the the aggregation of estimates over poverty
+status).
+</p>

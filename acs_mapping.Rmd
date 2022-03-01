@@ -1,0 +1,208 @@
+---
+title: "ACS mapping notebook"
+author: "Matthew Cvitanovich"
+output:
+  html_document:
+    df_print: paged
+    theme: paper
+    code_folding: hide
+  html_notebook: null
+editor_options:
+  chunk_output_type: console
+---
+
+<style>
+  .Notes {
+    background-color: #FDF9E4;
+    padding: 10px;
+    border: 1px solid;
+    border-color: #F7EBCF;
+    margin-left: 50px;
+    margin-right: 50px;
+    border-radius: 5px;
+    color: #866E42;}
+</style>
+
+
+This is a follow-up notebook to the ACS proof-of-concept notebook. 
+This notebook explores the spatial distribution of educational attainment 
+based on sex and race.
+
+```{r message=FALSE, warning=FALSE}
+library(rgdal)
+library(leaflet)
+library(vroom)
+library(dplyr)
+
+# From https://www.nctcog.org/trans/data/info/census-2020-participant-statistical-areas-program/downloads-2020-census-participant-statistical-ar
+tracts <- readOGR("data/Tarrant_Tract_BG_Jun1119/Tarrant_Tracts_Jun1119.shp",
+                  GDAL1_integer64_policy = TRUE)
+
+
+# educational attainment data from ACS
+education <- vroom::vroom('data/educational_attainment.csv', 
+                          col_types = cols(tract = col_character()))
+```
+
+
+
+#### Example
+Let's take a look at the spatial distribution educational attainment among
+white males.
+```{r message=FALSE, warning=FALSE}
+# Create datasets to add as map layers
+# ------------------------------------
+extact_data_for_layer <- function(data, sexcat, racecat, edcat){
+  data %>% 
+    filter(sex==sexcat,
+           race==racecat,
+           education==edcat)
+}
+
+sexcat <- "Male"
+racecat <- "white"
+
+
+less_hs <- merge(tracts, 
+                 dat <- extact_data_for_layer(education, sexcat, racecat, 
+                                                     'Less than high school'),
+                 by.x = "TRACTLABEL", by.y = "tract")
+
+hs <- merge(tracts, 
+                 extact_data_for_layer(education, sexcat, racecat,
+                                       'High school graduate'),
+                 by.x = "TRACTLABEL", by.y = "tract")
+
+
+some_college <- merge(tracts, 
+                 extact_data_for_layer(education, sexcat, racecat, 
+                                       'Some college'),
+                 by.x = "TRACTLABEL", by.y = "tract")
+
+
+college <- merge(tracts, 
+                 extact_data_for_layer(education, sexcat, racecat, 
+                                       'College graduate'),
+                 by.x = "TRACTLABEL", by.y = "tract")
+
+
+# setup popup labels
+labels <- sprintf(
+  "<strong>Tract</strong>:%s<br/>Population: %g",
+  tracts$TRACTID, tracts$POP10
+) %>% lapply(htmltools::HTML)
+
+
+# Create map
+# ----------
+leaflet(tracts) %>%
+  setView(lng = -97.3517, lat = 32.7732, zoom = 10) %>% 
+  # base mpa (roads, etc.)
+  addTiles(group='Base map') %>%
+  # layer = Less than high school
+  addPolygons(
+    data = less_hs,
+    group='Less than High School',
+    color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 0.5,
+    fillColor = ~colorQuantile("YlOrRd", proportion)( proportion),
+    highlightOptions = highlightOptions(
+      weight = 5,
+      color = "#666",
+      #dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE),
+    label = labels,
+    labelOptions = labelOptions(
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "15px",
+      direction = "auto")
+    )  %>% 
+  # layer = High School graduate
+  addPolygons(
+    data = hs,
+    group='High School graduate',
+    color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 0.5,
+    fillColor = ~colorQuantile("YlOrRd", proportion)( proportion),
+    highlightOptions = highlightOptions(
+      weight = 5,
+      color = "#666",
+      #dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE),
+    label = labels,
+    labelOptions = labelOptions(
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "15px",
+      direction = "auto")
+    )  %>% 
+  # layer = Some college
+  addPolygons(
+    data = some_college,
+    group='Some college',
+    color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 0.5,
+    fillColor = ~colorQuantile("YlOrRd", proportion)( proportion),
+    highlightOptions = highlightOptions(
+      weight = 5,
+      color = "#666",
+      #dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE),
+    label = labels,
+    labelOptions = labelOptions(
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "15px",
+      direction = "auto")
+    )  %>% 
+  # layer = College graduate
+  addPolygons(
+    data = college,
+    group='College graduate',
+    color = "#444444", weight = 1, smoothFactor = 0.5,
+    opacity = 1.0, fillOpacity = 0.5,
+    fillColor = ~colorQuantile("YlOrRd", proportion)( proportion),
+    highlightOptions = highlightOptions(
+      weight = 5,
+      color = "#666",
+      #dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE),
+    label = labels,
+    labelOptions = labelOptions(
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "15px",
+      direction = "auto")
+    )  %>% 
+  # markers = JPS Locations (all have been geocoded; only showing Main, here)
+  addMarkers(~-97.3268, ~32.7265, popup =~ 'JPS Main', group = 'JPS Locations') %>% 
+  # layer control box
+  addLayersControl(
+    baseGroups = c("Base map"),
+    overlayGroups = c("Less than High School", 
+                      "High School graduate",
+                      "Some college",
+                      "College graduate",
+                      "JPS Locations"),
+    options = layersControlOptions(collapsed = FALSE) 
+  ) %>% 
+  hideGroup("High School graduate") %>% 
+  hideGroup("Some college") %>% 
+  hideGroup("College graduate")
+```
+<p class="Notes">
+<strong>Notes</strong>
+Quite a few Census tracts do not appear to map well to the ACS (e.g., the ACS 
+includes tracts 1042.01 and 1042.02 ...yet the shape file provided includes 
+only 1042.13, 1042.15, and 1042.16).  
+Both years 2019 and 2020 appear to have this issue.  
+ZIP code tabulation areas (ZCTAs) may have better coverage.
+</p>
+
+
+```{r}
+age <- vroom('data/agecat.csv', 
+                          col_types = cols(tract = col_character()))
+```
+
