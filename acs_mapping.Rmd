@@ -34,8 +34,14 @@ library(leaflet)
 library(vroom)
 library(dplyr)
 
+
 # From https://www.nctcog.org/trans/data/info/census-2020-participant-statistical-areas-program/downloads-2020-census-participant-statistical-ar
-tracts <- readOGR("data/Tarrant_Tract_BG_Jun1119/Tarrant_Tracts_Jun1119.shp",
+shpurl <- 'https://www.nctcog.org/nctcg/media/Transportation/DocsMaps/Data/Manage/2020CensusPSAP/TractBG/Tarrant_Tract_BG_Jun1119.zip'
+
+shpfile <- 'data/Tarrant_Tract_BG_Jun1119.zip'
+download.file(shpurl, destfile = shpfile)
+
+tracts <- readOGR(dsn = unzip(shpfile, 'Tarrant_Tracts_Jun1119.shp'), 
                   GDAL1_integer64_policy = TRUE)
 
 

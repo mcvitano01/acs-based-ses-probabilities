@@ -727,8 +727,9 @@ As a sanity check, see the [Census Reporter](https://censusreporter.org/profiles
 
 #### Example using poverty status in the past 12 months {.tabset}
 The data for these plots derives entirely from tables 
-[B17001*](https://data.census.gov/cedsci/table?q=B17001).  
-
+[B17001*](https://data.census.gov/cedsci/table?q=B17001). 
+See the [Data Dictionary](https://www.socialexplorer.com/data/ACS2010/metadata/?ds=ACS10&var=B17001A036) 
+for more information regarding how poverty status was defined.  
 ##### Males
 ```{r message=FALSE, warning=FALSE}
 dat <- pov %>% 
