@@ -1,6 +1,6 @@
 **/data/**
-*.Renviron
+data/*.zip
 *.txt
-**.zip
-**.html
+*.html
+*.Renviron
 .Rproj.user
