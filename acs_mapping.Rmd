@@ -29,20 +29,53 @@ This notebook explores the spatial distribution of educational attainment
 based on sex and race.
 
 ```{r message=FALSE, warning=FALSE}
+
+##################################################################
+#                       !!! WARNING !!!
+#
+# The following packages will be installed to the users R library:
+# (1) rgdal
+# (2) leaflet
+# (3) vroom
+# (4) dplyr
+
+# If the user prefers not to install directly to their R library,
+# they may opt to use either of the following to create a project-
+# specific library.
+# (1) Renv (e.g., RStudio:: Project options -> Environments)
+# (2) Packrat
+
+##################################################################
+
+if(!require(rgdal)) install.packages('rgdal')
+if(!require(leaflet)) install.packages('leaflet')
+if(!require(vroom)) install.packages('vroom')
+if(!require(dplyr)) install.packages('dplyr')
+
+
 library(rgdal)
 library(leaflet)
 library(vroom)
 library(dplyr)
 
 
-# From https://www.nctcog.org/trans/data/info/census-2020-participant-statistical-areas-program/downloads-2020-census-participant-statistical-ar
-shpurl <- 'https://www.nctcog.org/nctcg/media/Transportation/DocsMaps/Data/Manage/2020CensusPSAP/TractBG/Tarrant_Tract_BG_Jun1119.zip'
+shp_zipfile <- file.path('data', 'Tarrant_Tract_BG_Jun1119.zip')
+shp_file <- file.path('data', 'Tarrant_Tract_BG_Jun1119',
+                      'Tarrant_Tracts_Jun1119.shp')
 
-shpfile <- 'data/Tarrant_Tract_BG_Jun1119.zip'
-download.file(shpurl, destfile = shpfile)
+# check for shp file (otherwise download it)
+if(!file.exists(shp_zipfile)){
+  
+  # From https://www.nctcog.org/trans/data/info/census-2020-participant-statistical-areas-program/downloads-2020-census-participant-statistical-ar
+  shpurl <- 'https://www.nctcog.org/nctcg/media/Transportation/DocsMaps/Data/Manage/2020CensusPSAP/TractBG/Tarrant_Tract_BG_Jun1119.zip'
+  
+  # download and unzip
+  download.file(shpurl, destfile = shp_zipfile)
+  unzip(shp_zipfile, exdir = substr(shp_zipfile, 0, nchar(shp_zipfile)-4))
+}
 
-tracts <- readOGR(dsn = unzip(shpfile, 'Tarrant_Tracts_Jun1119.shp'), 
-                  GDAL1_integer64_policy = TRUE)
+# read tracts
+tracts <- readOGR(dsn = shp_file,GDAL1_integer64_policy = TRUE)
 
 
 # educational attainment data from ACS

@@ -30,18 +30,42 @@ estimates of the following probabilities for an individual based on their age
   **(1)** highest level of education achieved  
   **(2)** having experienced income below/above the Federal 
 poverty level within the preceding 12 months 
-
+  
+The user will need to signup for their own US Census [API key](https://api.census.gov/data/key_signup.html).
 ```{r message=FALSE, warning=FALSE, include=FALSE}
+##################################################################
+#                       !!! WARNING !!!
+#
+# The following packages will be installed to the users R library:
+# (1) tidycensus
+# (2) dplyr
+# (3) stringr
+# (4) readr
+# (5) ggplot2
+
+# If the user prefers not to install directly to their R library,
+# they may opt to use either of the following to create a project-
+# specific library.
+# (1) Renv (e.g., RStudio:: Project options -> Environments)
+# (2) Packrat
+
+##################################################################
+if(!require(rgdal)) install.packages('tidycensus')
+if(!require(leaflet)) install.packages('dplyr')
+if(!require(vroom)) install.packages('stringr')
+if(!require(dplyr)) install.packages('readr')
+if(!require(dplyr)) install.packages('ggplot2')
+
 library(tidycensus)
 library(dplyr)
 library(stringr)
 library(readr)
 library(ggplot2)
 
+# user will need to create their own US Census API key
+# -- https://api.census.gov/data/key_signup.html
+# census_api_key( my-api-key )
 census_api_key(Sys.getenv('CENSUS_KEY'))
-
-# load Census concepts
-v19 <- load_variables(2019, "acs5", cache = TRUE)
 ```
 
 
@@ -50,6 +74,9 @@ v19 <- load_variables(2019, "acs5", cache = TRUE)
 
 # Get table IDs
 ###############
+
+# load Census concepts
+v19 <- load_variables(2019, "acs5", cache = TRUE)
 
 # Educational Attainment
 ed_vars <- v19 %>% 
