@@ -30,18 +30,22 @@ estimates of the following probabilities for an individual based on their age
   **(1)** highest level of education achieved  
   **(2)** having experienced income below/above the Federal 
 poverty level within the preceding 12 months 
-  
-The user will need to signup for their own US Census [API key](https://api.census.gov/data/key_signup.html).
-```{r message=FALSE, warning=FALSE, include=FALSE}
+
+```{r message=FALSE}
+
 ##################################################################
-#                       !!! WARNING !!!
+#                   Configuration
+#
+#                  !!! WARNING !!!
 #
 # The following packages will be installed to the users R library:
-# (1) tidycensus
-# (2) dplyr
-# (3) stringr
-# (4) readr
-# (5) ggplot2
+#   - tidycensus
+#   - vroom
+#   - dplyr
+#   - tidyr
+#   - stringr
+#   - readr
+#   - ggplot2
 
 # If the user prefers not to install directly to their R library,
 # they may opt to use either of the following to create a project-
@@ -50,11 +54,19 @@ The user will need to signup for their own US Census [API key](https://api.censu
 # (2) Packrat
 
 ##################################################################
-if(!require(rgdal)) install.packages('tidycensus')
-if(!require(leaflet)) install.packages('dplyr')
-if(!require(vroom)) install.packages('stringr')
-if(!require(dplyr)) install.packages('readr')
-if(!require(dplyr)) install.packages('ggplot2')
+
+
+# install missing packages
+# ------------------------
+packages.required <- c('tidycensus', 'vroom', 'dplyr', 
+                       'tidyr', 'stringr', 'readr', 'ggplot2')
+
+packages.toinstall <- packages.required[!(packages.required %in% installed.packages()[,"Package"])]
+
+if(length(packages.toinstall)) install.packages(packages.toinstall)
+
+
+
 
 library(tidycensus)
 library(dplyr)
@@ -62,36 +74,34 @@ library(stringr)
 library(readr)
 library(ggplot2)
 
-# user will need to create their own US Census API key
-# -- https://api.census.gov/data/key_signup.html
-# census_api_key( my-api-key )
 census_api_key(Sys.getenv('CENSUS_KEY'))
+
+# load Census concepts
+v20 <- load_variables(2020, "acs5", cache = TRUE)
 ```
 
 
 
-```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+```{r include=FALSE, message=FALSE}
 
-# Get table IDs
-###############
-
-# load Census concepts
-v19 <- load_variables(2019, "acs5", cache = TRUE)
+##################################################################
+#                   Inspect Table IDs
+##################################################################
 
 # Educational Attainment
-ed_vars <- v19 %>% 
+ed_vars <- v20 %>% 
   filter(grepl('SEX BY EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER', concept)) %>% 
   mutate(name_stub = substr(name, 1, 7)) %>% 
   distinct(concept, name_stub)
 
 # Age
-age_vars <- v19 %>% 
+age_vars <- v20 %>% 
   filter(grepl('SEX BY AGE BY EDUCATIONAL ATTAINMENT FOR THE POPULATION 18 YEARS AND OVER', concept)) %>% 
   mutate(name_stub = substr(name, 1, 7)) %>% 
   distinct(concept, name_stub)
 
 # Poverty
-pov_vars <- v19 %>% 
+pov_vars <- v20 %>% 
   filter(grepl('POVERTY', concept)) %>% 
   mutate(name_stub = substr(name, 1, 7)) %>% 
   distinct(concept, name_stub)
@@ -106,7 +116,7 @@ pov_vars <- v19 %>%
 ##################################################################
 
 
-# Race/ethnicity-specific proportions of education by (tract, sex)
+# Pr[educational attainment | sex, race/ethnicity, Census tract]
 # ----------------------------------------------------------------
 request_ed_by_tract <- function(raceth){
   varlist <- c('C15002A', 'C15002B', 'C15002C', 'C15002D',
@@ -132,7 +142,7 @@ request_ed_by_tract <- function(raceth){
                                  female_college_graduate = paste0(varlist[raceth], "_011")),
                     state='TX',
                     county='Tarrant',
-                    year = 2019,
+                    year = 2020,
                     moe_level=95)
   
   return(df)
@@ -140,7 +150,90 @@ request_ed_by_tract <- function(raceth){
 
 
 
-# Race/ethnicity-specific proportions of age by by (tract, sex)
+# Pr[educational attainment | age]
+# ----------------------------------
+request_age_for_us <- function(){
+  
+  df <- get_acs(
+    geography = "us", 
+    survey = 'acs5',
+    variables = c(# male
+      male_25_34_less_9       = paste0('B15001', "_012"),
+      male_25_34_less_hs      = paste0('B15001', "_013"),
+      male_25_34_hs_graduate  = paste0('B15001', "_014"),
+      male_25_34_some_college = paste0('B15001', "_015"),
+      male_25_34_associates   = paste0('B15001', "_016"),
+      male_25_34_bachelors    = paste0('B15001', "_017"),
+      male_25_34_graduate     = paste0('B15001', "_018"),
+
+      male_35_44_less_9       = paste0('B15001', "_020"),
+      male_35_44_less_hs      = paste0('B15001', "_021"),
+      male_35_44_hs_graduate  = paste0('B15001', "_022"),
+      male_35_44_some_college = paste0('B15001', "_023"),
+      male_35_44_associates   = paste0('B15001', "_024"),
+      male_35_44_bachelors    = paste0('B15001', "_025"),
+      male_35_44_graduate     = paste0('B15001', "_026"),
+     
+      male_45_64_less_9       = paste0('B15001', "_028"),
+      male_45_64_less_hs      = paste0('B15001', "_029"),
+      male_45_64_hs_graduate  = paste0('B15001', "_030"),
+      male_45_64_some_college = paste0('B15001', "_031"),
+      male_45_64_associates   = paste0('B15001', "_032"),
+      male_45_64_bachelors    = paste0('B15001', "_033"),
+      male_45_64_graduate     = paste0('B15001', "_034"),
+     
+      male_65_pl_less_9       = paste0('B15001', "_036"),
+      male_65_pl_less_hs      = paste0('B15001', "_037"),
+      male_65_pl_hs_graduate  = paste0('B15001', "_038"),
+      male_65_pl_some_college = paste0('B15001', "_039"),
+      male_65_pl_associates   = paste0('B15001', "_040"),
+      male_65_pl_bachelors    = paste0('B15001', "_041"),
+      male_65_pl_graduate     = paste0('B15001', "_042"),
+     
+      # female
+      female_25_34_less_9       = paste0('B15001', "_053"),
+      female_25_34_less_hs      = paste0('B15001', "_054"),
+      female_25_34_hs_graduate  = paste0('B15001', "_055"),
+      female_25_34_some_college = paste0('B15001', "_056"),
+      female_25_34_associates   = paste0('B15001', "_057"),
+      female_25_34_bachelors    = paste0('B15001', "_058"),
+      female_25_34_graduate     = paste0('B15001', "_059"),
+
+      female_35_44_less_9       = paste0('B15001', "_061"),
+      female_35_44_less_hs      = paste0('B15001', "_062"),
+      female_35_44_hs_graduate  = paste0('B15001', "_063"),
+      female_35_44_some_college = paste0('B15001', "_064"),
+      female_35_44_associates   = paste0('B15001', "_065"),
+      female_35_44_bachelors    = paste0('B15001', "_066"),
+      female_35_44_graduate     = paste0('B15001', "_067"),
+     
+      female_45_64_less_9       = paste0('B15001', "_069"),
+      female_45_64_less_hs      = paste0('B15001', "_070"),
+      female_45_64_hs_graduate  = paste0('B15001', "_071"),
+      female_45_64_some_college = paste0('B15001', "_072"),
+      female_45_64_associates   = paste0('B15001', "_073"),
+      female_45_64_bachelors    = paste0('B15001', "_074"),
+      female_45_64_graduate     = paste0('B15001', "_075"),
+     
+      female_65_pl_less_9       = paste0('B15001', "_077"),
+      female_65_pl_less_hs      = paste0('B15001', "_078"),
+      female_65_pl_hs_graduate  = paste0('B15001', "_079"),
+      female_65_pl_some_college = paste0('B15001', "_080"),
+      female_65_pl_associates   = paste0('B15001', "_081"),
+      female_65_pl_bachelors    = paste0('B15001', "_082"),
+      female_65_pl_graduate     = paste0('B15001', "_083")
+      ),
+    year = 2020,
+    moe_level=95)
+  
+  return(df)
+}
+
+
+
+
+
+# Pr[age category | sex, race/ethnicity, Census tract)
 # -------------------------------------------------------------
 # ... B01001A == "Sex by Age" ... with smaller age categories
 request_age_by_tract <- function(raceth){
@@ -176,7 +269,7 @@ request_age_by_tract <- function(raceth){
                                  ),
                     state='TX',
                     county='Tarrant',
-                    year = 2019,
+                    year = 2020,
                     moe_level=95)
   
   return(df)
@@ -184,7 +277,7 @@ request_age_by_tract <- function(raceth){
 
 
 
-# Race/ethnicity-specific proportions of poverty status by by (tract, sex, age)
+# Pr[educational attainment | age category, sex, race/ethnicity, Census tract]
 # -----------------------------------------------------------------------------
 # https://data.census.gov/cedsci/table?q=B17001
 request_below_poverty_by_tract <- function(raceth){
@@ -216,7 +309,7 @@ request_below_poverty_by_tract <- function(raceth){
                                  ),
                    state='TX',
                    county='Tarrant',
-                   year = 2019,
+                   year = 2020,
                    moe_level=95) %>% 
     mutate(poverty_status = 'Below')
   
@@ -243,7 +336,7 @@ request_below_poverty_by_tract <- function(raceth){
                                  ),
                    state='TX',
                    county='Tarrant',
-                   year = 2019,
+                   year = 2020,
                    moe_level=95) %>% 
     mutate(poverty_status = 'Above')
   
@@ -251,10 +344,10 @@ request_below_poverty_by_tract <- function(raceth){
   
   return(df)
 }
+```
 
 
-
-
+```{r message=FALSE}
 ##################################################################
 #                   Process API Requests
 ##################################################################
@@ -262,7 +355,7 @@ request_below_poverty_by_tract <- function(raceth){
 
 # Race/ethnicity-specific proportions of (education, sex) by tract
 # ----------------------------------------------------------------
-create_educational_attainment_df <- function(){
+create_ed_by_tract_df <- function(){
   # Educational Attainment
   white <- request_ed_by_tract('white') %>% mutate(race = 'white')
   black <- request_ed_by_tract('black') %>% mutate(race = 'black')
@@ -280,6 +373,12 @@ create_educational_attainment_df <- function(){
   ed <- ed %>% 
     mutate(
       tract = str_extract(NAME, '\\d+\\.*\\d*'),
+      tract = case_when(
+           str_length(tract) == 4 ~ paste0(tract, '.00'),
+           str_length(tract) >4 & str_length(tract) <7 ~ str_pad(tract, 7, side='right', pad='0'),
+           str_length(tract) ==7 ~ tract,
+           TRUE ~ 'INVESTIGATE'
+         ),
       sex = case_when(
         grepl('female', variable) ~ 'Female',
         grepl('male', variable)   ~ 'Male',
@@ -301,7 +400,7 @@ create_educational_attainment_df <- function(){
                 # ... I've left this part in
                 filter(education != 'Total' & sex != 'Total') %>% 
                 group_by(tract, sex, race) %>% 
-                mutate(denom = sum(estimate)) %>% 
+                mutate(denom = sum(estimate, na.remove=TRUE)) %>% 
                 distinct(tract, sex, race, denom)
               ) %>% 
     left_join(ed %>% 
@@ -314,7 +413,8 @@ create_educational_attainment_df <- function(){
            proportion_moe = ifelse(education=='Total', NA_real_, proportion_moe)
            ) %>% 
     # clean up
-    rename(geoid=GEOID, name=NAME)
+    rename(geoid=GEOID, name=NAME) %>%
+    distinct(education, sex, race, tract, .keep_all=TRUE)
   
   return(ed)
   
@@ -322,80 +422,56 @@ create_educational_attainment_df <- function(){
 
 
 
-# Race/ethnicity-specific proportions of (age, sex) by tract
-# ----------------------------------------------------------
+# National proportions of (education, age) ... marginalized over sex
+# ------------------------------------------------------------------
 create_age_df <- function(){
-
-  # Age
-  white <- request_age_by_tract('white') %>% mutate(race = 'white')
-  black <- request_age_by_tract('black') %>% mutate(race = 'black')
-  alaskan <- request_age_by_tract('alaskan') %>% mutate(race = 'alaskan')
-  asian <- request_age_by_tract('asian') %>% mutate(race = 'asian')
-  hawaian <- request_age_by_tract('hawaian') %>% mutate(race = 'hawaian')
-  other <- request_age_by_tract('other') %>% mutate(race = 'other')
-  multirace <- request_age_by_tract('multirace') %>% mutate(race = 'multirace')
-  hispanic <- request_age_by_tract('hispanic') %>% mutate(race = 'hispanic')
+  age <- request_age_for_us()
   
-  # combine all requests
-  age <- rbind(white, black, alaskan, asian, hawaian, other, multirace, hispanic)
-  
-  # extract Census tract from text
   age <- age %>% 
     mutate(
-      tract = str_extract(NAME, '\\d+\\.*\\d*'),
       sex = case_when(
         grepl('female', variable) ~ 'Female',
         grepl('male', variable)   ~ 'Male',
         TRUE ~ 'Total'),
       agecat = case_when(
-        grepl('25_29', variable)   ~ '25-29',
-        grepl('30_34', variable)   ~ '30-34',
+        grepl('25_34', variable)   ~ '25-34',
         grepl('35_44', variable)   ~ '35-44',
-        grepl('45_54', variable)   ~ '45-54',
-        grepl('55_64', variable)   ~ '55-64',
-        grepl('65_74', variable)   ~ '65-74',
-        grepl('75_84', variable)   ~ '75-84',
-        grepl('85_pl', variable)   ~ '>=85',
+        grepl('45_64', variable)   ~ '45-64',
+        grepl('65_pl', variable)   ~ '>=65',
+        TRUE ~ 'Total'),
+      education = case_when(
+        grepl('less_hs|less_9', variable)   ~ 'Less than high school',
+        grepl('hs_graduate', variable)   ~ 'High school graduate',
+        grepl('some_college', variable)   ~ 'Some college',
+        grepl('associates|bachelors|graduate', variable)   ~ 'College graduate',
         TRUE ~ 'Total')
-      )
-  
-  
-  age <- age %>% 
-    # derive proportions and their MOEs
-    left_join(age %>% 
-                # the denominators need to be adjusted to that they only consider
-                #   the age categories of interest
-                filter(agecat != 'Total' & sex != 'Total') %>% 
-                group_by(tract, sex, race) %>% 
-                mutate(denom = sum(estimate)) %>% 
-                distinct(tract, sex, race, denom)
-              ) %>% 
-    left_join(age %>% 
-                filter(agecat == 'Total' & sex != 'Total') %>% 
-                distinct(tract, sex, race, moe) %>% 
-                rename(moe_denom = moe)
-              ) %>% 
-    mutate(proportion = estimate/denom,
-           proportion_moe = abs(sqrt((moe^2) - ((estimate/denom)^2 * moe_denom)))/denom,
-           proportion_moe = ifelse(agecat=='Total', NA_real_, proportion_moe),
-           # proportions for 'Total' fields will no longer == 1.0
-           # ... reset that for sanity's sake
-           proportion = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, proportion),
-           proportion_moe = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, proportion_moe),
-           denom = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, denom),
-           moe_denom = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, moe_denom)
+      ) %>% 
+    group_by(education, agecat) %>% 
+    mutate(estimate = sum(estimate),
+           moe = abs(sqrt( sum(moe^2) ))
+    ) %>% 
+    ungroup(education, agecat) %>%
+    select(education, agecat, estimate, moe) %>% 
+    distinct() %>% 
+    group_by(agecat) %>% 
+    mutate(denom = sum(estimate),
+           moe_denom = abs(sqrt( sum(moe^2) ))
            ) %>% 
-    # clean up
-    rename(geoid=GEOID, name=NAME)
+    ungroup() %>% 
+    mutate(proportion = estimate/denom,
+           proportion_moe = abs(sqrt((moe^2) - ((estimate/denom)^2 * moe_denom)))/denom
+    ) %>%
+    distinct(education, agecat, .keep_all=TRUE)
   
   return(age)
   
 }
 
 
+
 # Race/ethnicity-specific proportions of poverty status by by (tract, sex, age)
 # -----------------------------------------------------------------------------
-create_poverty_status_df <- function(){
+create_poverty_by_tract_df <- function(){
   # Educational Attainment
   white <- request_below_poverty_by_tract('white') %>% mutate(race = 'white')
   black <- request_below_poverty_by_tract('black') %>% mutate(race = 'black')
@@ -413,6 +489,11 @@ create_poverty_status_df <- function(){
   pov <- pov %>% 
     mutate(
       tract = str_extract(NAME, '\\d+\\.*\\d*'),
+      tract = case_when(
+        str_length(tract) == 4 ~ paste0(tract, '.00'),
+        str_length(tract) >4 & str_length(tract) <7 ~ str_pad(tract, 7, side='right', pad='0'),
+        str_length(tract) ==7 ~ tract,
+        TRUE ~ 'INVESTIGATE'),
       sex = case_when(
         grepl('female', variable) ~ 'Female',
         grepl('male', variable)   ~ 'Male',
@@ -437,10 +518,10 @@ create_poverty_status_df <- function(){
                 #   (we need to aggregate over status)
                 filter(agecat != 'Total' & sex != 'Total') %>% 
                 group_by(tract, sex, race) %>% 
-                mutate(denom = sum(estimate)) %>% 
+                mutate(denom = sum(estimate, na.remove=TRUE)) %>% 
                 distinct(tract, sex, race, denom)
               ) %>% 
-    left_join(age %>% 
+    left_join(pov %>% 
                 filter(agecat == 'Total' & sex != 'Total') %>% 
                 distinct(tract, sex, race, moe) %>% 
                 rename(moe_denom = moe)
@@ -456,7 +537,8 @@ create_poverty_status_df <- function(){
            moe_denom = ifelse(agecat == 'Total' & sex != 'Total', NA_real_, moe_denom)
            ) %>% 
     # clean up
-    rename(geoid=GEOID, name=NAME)
+    rename(geoid=GEOID, name=NAME) %>%
+    distinct(poverty_status, agecat, sex, race, tract, .keep_all=TRUE)
   
   return(pov)
   
@@ -464,13 +546,20 @@ create_poverty_status_df <- function(){
 ```
 
 
-
 ```{r message=FALSE, warning=FALSE}
-dir.create(file.path('data'))
+
+##################################################################
+#                          Read in data 
+#               or Make API calls and save output
+##################################################################
+
+dir.create(file.path('data'), showWarnings = FALSE)
 
 ed_filepath  <- file.path('data', 'educational_attainment.csv')
-age_filepath <- file.path('data', 'agecat.csv')
+age_national_filepath <- file.path('data', 'agecat_national.csv')
 pov_filepath <- file.path('data', 'povertyt_status_12m.csv')
+
+# READ tract as CHARACTER!!!
 
 # Get educational attainment data
 # -------------------------------
@@ -478,23 +567,21 @@ if(file.exists(ed_filepath)){
   ed <- vroom::vroom(ed_filepath,
                      col_types = cols(tract=col_character()))
 } else{
-  ed <- create_educational_attainment_df()
+  ed <- create_ed_by_tract_df()
   
   # write out
   readr::write_excel_csv(ed, ed_filepath)
 }
 
-
-# Get age category data
-# ---------------------
-if(file.exists(age_filepath)){
-  age <- vroom::vroom(age_filepath,
-                     col_types = cols(tract=col_character()))
+# Get age (national) category data
+# --------------------------------
+if(file.exists(age_national_filepath)){
+  age <- vroom::vroom(age_national_filepath)
 } else {
   age <- create_age_df()
   
   # write out
-  readr::write_excel_csv(age, age_filepath)
+  readr::write_excel_csv(age, age_national_filepath)
 }
 
 
@@ -504,15 +591,12 @@ if(file.exists(pov_filepath)){
   pov <- vroom::vroom(pov_filepath,
                      col_types = cols(tract=col_character()))
 } else {
-  pov <- create_poverty_status_df()
+  pov <- create_poverty_by_tract_df()
   
   # write out
   readr::write_excel_csv(pov, pov_filepath)
 }
 
-
-
-# READ tract as CHARACTER!!!
 ```
 
 
@@ -520,7 +604,7 @@ if(file.exists(pov_filepath)){
 ##### Absolute numbers
 ```{r message=FALSE, warning=FALSE}
 dat <- ed %>% 
-  filter(tract == 1141.03) %>% 
+  filter(tract == 1115.67) %>% 
   filter(sex == 'Male') %>% 
   filter(race %in% c('white', 'black', 'hispanic')) %>% 
   filter(education != 'Total') %>% 
@@ -546,16 +630,14 @@ ggplot(dat,
   labs(
     x = 'Highest Level of Education Achieved',
     y = 'Number of persons',
-    title = 'Male -- Tract 1141.03',
-    fill = 'Age Category') + 
+    title = 'Male -- Tract 1115.67',
+    fill = 'Race/Ethnicity') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
 ```
 
-
+<p></p>
 ##### Proportions
-What is the likelihood of educational attainment XXX for a "white" male residing 
-in Census tract 1141.03 during 2019? 
 ```{r message=FALSE, warning=FALSE}
 # stacked bar chart
 ggplot(dat,
@@ -570,8 +652,8 @@ ggplot(dat,
   labs(
     x = 'Highest Level of Education Achieved',
     y = 'Proportion',
-    title = 'Male -- Tract 1141.03',
-    fill = 'Age Category') + 
+    title = 'Male -- Tract 1115.67',
+    fill = 'Race/Ethnicity') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
 ```
@@ -582,87 +664,48 @@ $MOE_p = \frac{\pm \sqrt{MOE_{num}^{2} - [(\frac{X_{num}}{X_{den}}^2) * MOE_{den
 </p>
 
 
-
+<p></p>
 #### Calculate the estimated probabilities
-*First*, we snag the proportion of the population, in 2019 (in each Census tract, 
+*First*, we snag the proportion of the population, in 2020 (in each Census tract, 
 sex, and race) with each available category of "highest educational attainment".
-High School education (highest attainment).  
   
-*Then*, we snag the proportion of the population (again, by Census tract, 
-sex, and race) that fell into each available age category.  
+*Then*, we snag the proportion of the population (within available age 
+categories) with each available category of "highest educational attainment".
   
 *Finally*, we obtain the estimated probability of education attainment level XXX 
 by multiplying these probabilities (proportions).  
 
-```{r message=FALSE, warning=FALSE}
-estimates <- ed %>% 
-  group_by(tract, sex, race, education) %>% 
-  summarise(num = sum(estimate)) %>% 
-  left_join(age %>% 
-              filter(agecat!='Total') %>% 
-              group_by(tract, sex, race) %>% 
-              summarize(denom = sum(estimate))
-            ) %>% 
-  mutate(p = num/denom) %>% 
-  filter(education != 'Total') %>% 
-  ungroup()
 
-# add probabilities for age categories, within (tract, sex, race)
-q <- age %>% 
-  filter(agecat!='Total') %>% 
-  group_by(tract, agecat, sex, race) %>% 
-  summarize(n = sum(estimate)) %>% 
-  ungroup()
-  
-q <- tidyr::pivot_wider(q,
-                   id_cols=c(tract, sex, race),
-                   names_from=agecat, 
-                   names_prefix='age_',
-                   names_repair='universal',
-                   values_from=n)
-
-estimates <- estimates %>% 
-  left_join(q) %>% 
-  # p = probability of educational attainment for (tract, sex, race)
-  #     * probability of age-category for (tract, sex, race)
-  mutate(age_25.29 = p*(age_25.29/denom),
-         age_30.34 = p*(age_30.34/denom),
-         age_35.44 = p*(age_35.44/denom),
-         age_45.54 = p*(age_45.54/denom),
-         age_55.64 = p*(age_55.64/denom),
-         age_65.74 = p*(age_65.74/denom),
-         age_75.84 = p*(age_75.84/denom),
-         age_..85  = p*(age_..85/denom)
-  )
-
-```
-
-
-  
+<p></p>
 #### Examples {.tabset}
 ##### Males
 What is the likelihood of educational attainment XXX for a "white" male residing 
-in Census tract 1141.03 during 2019 (given their age at run-time)?  
-```{r message=FALSE, warning=FALSE}
+in Census tract 1141.03 during 2020 (given their age at run-time)?  
+```{r message=FALSE}
+
+estimates <- ed %>% 
+  filter(education != 'Total') %>% 
+  select(education, sex, race, tract, estimate, moe, proportion, proportion_moe) %>% 
+  left_join(age %>% select(education, agecat, proportion, proportion_moe) %>% 
+              rename(p_age = proportion, p_age_moe = proportion_moe)) %>% 
+  mutate(p = proportion*p_age,
+         p_moe = abs(sqrt( (proportion^2 * p_age_moe^2) + (p_age^2 * proportion_moe^2) ))
+  ) %>% 
+  mutate(agecat = ifelse(agecat == '25-29', '25-34', agecat))
+
 # example
-z <- estimates %>% 
-  filter(tract == 1141.03) %>% 
+dat <- estimates %>% 
+  filter(tract == 1115.67) %>% 
   filter(sex == 'Male') %>% 
   filter(race %in% c('white', 'black', 'hispanic')) %>% 
   ungroup() %>% 
-  select(-c(tract, sex, num, denom, p))
+  select(tract, sex, race, agecat, education, p_age, p, p_moe)
 
 #sum(z) == 1.0 ... sanity check!!
 
 # pivot data for plotting
-agefields <- z %>% select(-c(education, race)) %>% names()
-dat <- tidyr::pivot_longer(z, cols=all_of(agefields))
-dat <- dat %>% 
-  mutate(name = str_replace(name, '\\.\\.', ''),
-         name = str_replace(name, 'age', ''),
-         name = str_replace(name, '\\.', '-'),
-         name = str_replace(name, '_', ''),
-         name = as.factor(name))
+dat$agecat <- factor(dat$agecat,
+                     levels=c('25-34', '35-44', '45-64', '>=65'))
 
 dat$education <- factor(dat$education, 
                         levels=c('Less than high school', 
@@ -672,7 +715,7 @@ dat$education <- factor(dat$education,
 
 # stacked bar chart
 ggplot(dat,
-       aes(fill=name, y=value, x=education, label=round(value, 2))) + 
+       aes(fill=agecat, y=p, x=education, label=round(p, 2))) + 
   geom_bar(position="stack", stat="identity") +
   geom_text(size = 2.8,
             position = position_stack(vjust = 0.5)) +
@@ -681,7 +724,7 @@ ggplot(dat,
   labs(
     x = 'Highest Level of Education Achieved',
     y = 'Proportion',
-    title = 'Male -- Tract 1141.03',
+    title = 'Male -- Tract 1115.67',
     fill = 'Age Category') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
@@ -693,29 +736,34 @@ be derived as described in the ACS handbook.
 </p>
 
 
-
+<p></p>
 ##### Females
 What about for a female?
-```{r message=FALSE, warning=FALSE}
+```{r message=FALSE}
+
+estimates <- ed %>% 
+  filter(education != 'Total') %>% 
+  select(education, sex, race, tract, estimate, moe, proportion, proportion_moe) %>% 
+  left_join(age %>% select(education, agecat, proportion, proportion_moe) %>% 
+              rename(p_age = proportion, p_age_moe = proportion_moe)) %>% 
+  mutate(p = proportion*p_age,
+         p_moe = abs(sqrt( (proportion^2 * p_age_moe^2) + (p_age^2 * proportion_moe^2) ))
+  ) %>% 
+  mutate(agecat = ifelse(agecat == '25-29', '25-34', agecat))
+
 # example
-z <- estimates %>% 
-  filter(tract == 1141.03) %>% 
+dat <- estimates %>% 
+  filter(tract == 1115.67) %>% 
   filter(sex == 'Female') %>% 
   filter(race %in% c('white', 'black', 'hispanic')) %>% 
   ungroup() %>% 
-  select(-c(tract, sex, num, denom, p))
+  select(tract, sex, race, agecat, education, p_age, p, p_moe)
 
 #sum(z) == 1.0 ... sanity check!!
 
 # pivot data for plotting
-agefields <- z %>% select(-c(education, race)) %>% names()
-dat <- tidyr::pivot_longer(z, cols=all_of(agefields))
-dat <- dat %>% 
-  mutate(name = str_replace(name, '\\.\\.', ''),
-         name = str_replace(name, 'age', ''),
-         name = str_replace(name, '\\.', '-'),
-         name = str_replace(name, '_', ''),
-         name = as.factor(name))
+dat$agecat <- factor(dat$agecat,
+                     levels=c('25-34', '35-44', '45-64', '>=65'))
 
 dat$education <- factor(dat$education, 
                         levels=c('Less than high school', 
@@ -725,7 +773,7 @@ dat$education <- factor(dat$education,
 
 # stacked bar chart
 ggplot(dat,
-       aes(fill=name, y=value, x=education, label=round(value, 2))) + 
+       aes(fill=agecat, y=p, x=education, label=round(p, 2))) + 
   geom_bar(position="stack", stat="identity") +
   geom_text(size = 2.8,
             position = position_stack(vjust = 0.5)) +
@@ -734,7 +782,7 @@ ggplot(dat,
   labs(
     x = 'Highest Level of Education Achieved',
     y = 'Proportion',
-    title = 'Female -- Tract 1141.03',
+    title = 'Female -- Tract 1115.67',
     fill = 'Age Category') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
@@ -746,23 +794,22 @@ be derived as described in the ACS handbook.
 </p>
 
 
-
+<p></p>
 ##### Validation
 As a sanity check, see the [Census Reporter](https://censusreporter.org/profiles/14000US48439114103-census-tract-114103-tarrant-tx/).
 
 
-
+<p></p>
 #### Example using poverty status in the past 12 months {.tabset}
 The data for these plots derives entirely from tables 
-[B17001*](https://data.census.gov/cedsci/table?q=B17001). 
-See the [Data Dictionary](https://www.socialexplorer.com/data/ACS2010/metadata/?ds=ACS10&var=B17001A036) 
-for more information regarding how poverty status was defined.  
+[B17001*](https://data.census.gov/cedsci/table?q=B17001).  
+
 ##### Males
 ```{r message=FALSE, warning=FALSE}
 dat <- pov %>% 
   filter(poverty_status != 'Total') %>% 
   # example data
-  filter(tract == 1141.03) %>% 
+  filter(tract == 1115.67) %>% 
   filter(sex == 'Male') %>% 
   filter(race %in% c('white', 'black', 'hispanic')) %>% 
   filter(agecat != 'Total') %>% 
@@ -780,7 +827,7 @@ ggplot(dat,
   labs(
     x = 'Poverty Status in the Past 12 Months',
     y = 'Proportion',
-    title = 'Male -- Tract 1141.03',
+    title = 'Male -- Tract 1115.67',
     fill = 'Age Category') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
@@ -795,12 +842,13 @@ status).
 </p>
 
 
+<p></p>
 ##### Females
 ```{r message=FALSE, warning=FALSE}
 dat <- pov %>% 
   filter(poverty_status != 'Total') %>% 
   # example data
-  filter(tract == 1141.03) %>% 
+  filter(tract == 1115.67) %>% 
   filter(sex == 'Female') %>% 
   filter(race %in% c('white', 'black', 'hispanic')) %>% 
   filter(agecat != 'Total') %>% 
@@ -818,7 +866,7 @@ ggplot(dat,
   labs(
     x = 'Poverty Status in the Past 12 Months',
     y = 'Proportion',
-    title = 'Female -- Tract 1141.03',
+    title = 'Female -- Tract 1115.67',
     fill = 'Age Category') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
