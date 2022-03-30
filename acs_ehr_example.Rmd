@@ -1,0 +1,428 @@
+---
+title: "Applying ACS probabilities to EHR data"
+author: "Matthew Cvitanovich"
+output:
+  html_document:
+    df_print: paged
+    theme: paper
+    code_folding: hide
+  html_notebook: null
+editor_options:
+  chunk_output_type: console
+---
+
+<style>
+  .Notes {
+    background-color: #FDF9E4;
+    padding: 10px;
+    border: 1px solid;
+    border-color: #F7EBCF;
+    margin-left: 50px;
+    margin-right: 50px;
+    border-radius: 5px;
+    color: #866E42;}
+</style>
+
+
+```{r message=FALSE, warning=FALSE}
+
+##################################################################
+#                   Configuration
+#
+#                  !!! WARNING !!!
+#
+# The following packages will be installed to the users R library:
+#   - vroom
+#   - dplyr
+#   - tidyr
+#   - stringr
+#   - qwraps2
+#   - kableExtra
+
+# If the user prefers not to install directly to their R library,
+# they may opt to use either of the following to create a project-
+# specific library.
+# (1) Renv (e.g., RStudio:: Project options -> Environments)
+# (2) Packrat
+
+##################################################################
+
+# install missing packages
+# ------------------------
+packages.required <- c('vroom', 'dplyr', 'tidyr', 
+                       'stringr', 'qwraps2', 'kableExtra')
+
+packages.toinstall <- packages.required[!(packages.required %in% installed.packages()[,"Package"])]
+
+if(length(packages.toinstall)) install.packages(packages.toinstall)
+
+
+library(vroom)
+library(dplyr)
+library(stringr)
+library(qwraps2)
+library(kableExtra)
+
+# no scientific notation !
+options(scipen=999)
+
+# table rendering
+options(qwraps2_markup = "markdown")
+options(qwraps2_frmt_digits = 2)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+
+##################################################################
+#                           File Paths
+#                          Read in Data
+##################################################################
+
+# ACS datafiles (processed)
+#
+# (1) Educational attainment by sex, race, Census tract
+# (2) Educational attainment by age category
+# (3) Poverty in last 12 months by age category, sex, race, tract
+# ---------------------------------------------------------------
+dir.create(file.path('data'))
+
+ed_filepath  <- file.path('data', 'educational_attainment.csv')
+age_filepath <- file.path('data', 'agecat_national.csv')
+pov_filepath <- file.path('data', 'povertyt_status_12m.csv')
+
+
+
+# Tarrant County tracts 
+# see https://www.census.gov/geographies/reference-maps/2020/geo/2020pl-maps/2020-census-tract.html
+# ----------------------------------
+tracts.tarrant.list.census <- 
+  vroom('https://www2.census.gov/geo/maps/DC2020/PL20/st48_tx/censustract_maps/c48439_tarrant/DC20CT_C48439_CT2MS.txt') %>% 
+  mutate(tract = as.character(TRACT),
+         tract = case_when(
+           str_length(tract) == 4 ~ paste0(tract, '.00'),
+           str_length(tract) >4 & str_length(tract) <7 ~ str_pad(tract, 7, side='right', pad='0'),
+           str_length(tract) ==7 ~ tract,
+           TRUE ~ 'INVESTIGATE'
+         ))
+
+# patient demographics (1:1)
+# --------------------------
+hcv.path <- file.path('H://Documents/_hcv/data/registry', 
+                      'HCV_PATIENTS_JAN2022.txt')
+
+# patient address history (1:M)
+# -----------------------------
+hcv.geo.path <- file.path('H://Documents/_cehdr/apps/cehdr.registry.map/data-raw',
+                          'hcv-address-hx-2020-06.txt')
+
+
+
+##################################################################
+#                          Read in data 
+##################################################################
+
+ed <- vroom::vroom(ed_filepath, col_types = cols(tract=col_character()))
+age <- vroom::vroom(age_filepath)
+
+hcv <- vroom::vroom(hcv.path)
+hcv.geo <- vroom::vroom(hcv.geo.path)
+
+```
+
+
+
+```{r message=FALSE, warning=FALSE}
+
+##################################################################
+#                   Process HCV Patient Table
+##################################################################
+
+# keep only most recent address for each patient
+# ----------------------------------------------
+hcv.geo <- hcv.geo %>% 
+  arrange(PAT_ID, desc(END_DT)) %>% 
+  distinct(PAT_ID, .keep_all=TRUE)
+
+# patient demographics must match categories in the ACS data
+# ----------------------------------------------------------
+hcv <- hcv %>% 
+  mutate(
+    race = case_when(
+      ETHNIC_GROUP_NM == 'Hispanic, Latino or Spanish ethnicity'   ~ 'hispanic',
+      PATIENT_RACE == 'WHITE OR CAUCASIAN;'                        ~ 'white',
+      PATIENT_RACE == 'BLACK OR AFRICAN AMERICAN;'                 ~ 'black',
+      PATIENT_RACE == 'ASIAN;'                                     ~ 'asian',
+      PATIENT_RACE == 'AMERICAN INDIAN OR ALASKA NATIVE;'          ~ 'alaskan',
+      PATIENT_RACE == 'NATIVE HAWAIIAN OR OTHER PACIFIC ISLANDER;' ~ 'hawaian',
+      PATIENT_RACE == 'OTHER;'                                     ~ 'other',
+      grepl('; ', PATIENT_RACE)                                   ~ 'multirace',
+      TRUE ~ 'unknown'),
+    
+    sex = PAT_SEX,
+    
+    age = round((as.Date('2020-06-01') - as.Date(BIRTH_DATE))/365.25),
+    
+    agecat = case_when(
+      age <=24            ~ '<=24',
+      age >=25 & age <=34 ~ '25-34',
+      age >=35 & age <=44 ~ '35-44',
+      age >=45 & age <=64 ~ '45-64',
+      age >=65            ~ '>=65',
+      TRUE ~ 'unknown')
+    ) %>% 
+  select(PAT_ID, PAT_MRN_ID, BIRTH_DATE, age, agecat,
+         sex, race, PATIENT_RACE, ETHNIC_GROUP_NM) %>% 
+  left_join(hcv.geo) %>% 
+  filter(!is.na(GEOID10)) %>% 
+  mutate(tract = gsub('^[0-9]{5}([0-9]{4})([0-9]{2})[0-9]+', '\\1.\\2', GEOID10),
+         block = substr(GEOID10, 12, 20))
+
+
+# clean up
+# --------
+rm(hcv.geo)
+
+```
+
+
+
+
+```{r message=FALSE}
+
+##################################################################
+#           Combine Educational Attainment with Age categories
+#               Calculate Conditional Probabilities
+#                   Join with HCV Patient Table
+#                    List Missing Census Tracts
+##################################################################
+
+# join educational attainment with age categories
+# calculate conditional probabilities
+# ------------------------------------------------
+estimates <- ed %>% 
+  filter(education != 'Total') %>% 
+  select(education, sex, race, tract, estimate, moe, proportion, proportion_moe) %>% 
+  left_join(age %>% select(education, agecat, proportion, proportion_moe) %>% 
+              rename(p_age = proportion, p_age_moe = proportion_moe)) %>% 
+  mutate(p = proportion*p_age,
+         p_moe = abs(sqrt( (proportion^2 * p_age_moe^2) + (p_age^2 * proportion_moe^2) ))
+  )
+
+
+# join HCV patient table with conditional probabilities
+# keep only subset of data fields
+# create fields for max(prob) and predicted education
+# -----------------------------------------------------
+hcv.estimates <- hcv %>% 
+  select(PAT_ID, PAT_MRN_ID, age, agecat, sex, race, tract) %>% 
+  left_join(estimates %>% 
+              select(agecat, sex, race, tract, 
+                     education, p, p_moe)) %>%
+  group_by(PAT_ID) %>% 
+  mutate(
+    education_pred = first(education, order_by = desc(p)),
+    education_prob = first(p, order_by = desc(p))) %>% 
+  ungroup() %>% 
+  mutate(
+    education_pred = ifelse(education_prob == 0, 'Unknown', education_pred),
+    education_int  = case_when(
+      education_pred == 'Unknown'               ~ 88,
+      education_pred == 'Less than high school' ~ 1,
+      education_pred == 'High school graduate'  ~ 2,
+      education_pred == 'Some college'          ~ 3,
+      education_pred == 'College graduate'      ~ 4,
+      TRUE ~ 99))
+  
+
+# pivot probabilities for each educational class (long -> wide)
+# -------------------------------------------------------------
+p <- tidyr::pivot_wider(hcv.estimates,
+                   id_cols = PAT_ID,
+                   names_from = education, 
+                   names_prefix = 'p_',
+                   names_repair = 'universal',
+                   values_from = p) %>% 
+  select(-'p_NA')
+
+# pivot margins of error for each educational class (long -> wide)
+# ----------------------------------------------------------------
+# p_moe <- tidyr::pivot_wider(hcv.estimates,
+#                    id_cols = PAT_ID,
+#                    names_from = education, 
+#                    names_prefix = 'moe_',
+#                    names_repair = 'universal',
+#                    values_from = p_moe) %>% 
+#   select(-'moe_NA')
+
+
+# join wide elements (p, moe) back with HCV patient table
+# -------------------------------------------------------
+hcv.estimates <- hcv.estimates %>% 
+  distinct(PAT_ID, .keep_all=TRUE) %>% 
+  select(-c(education, p, p_moe)) %>% 
+  left_join(p)
+  #left_join(p_moe)
+
+
+# investigate missing Census tracts (not present in ACS data)
+# -----------------------------------------------------------
+missing_tracts <- hcv.estimates %>% filter(is.na(p_Less.than.high.school)) %>% 
+  distinct(tract)
+
+
+# write out dataset
+# -----------------
+hcv.estimates %>% vroom_write('hcv-registry-acs-estimates.csv', delim = '\t')
+```
+
+
+### Example of 10 patients
+```{r message=FALSE}
+
+##################################################################
+#                   Table an Example (5 patients)
+##################################################################
+
+hcv.estimates %>% 
+  select(PAT_ID, agecat, sex, race, tract, 
+         education_pred, starts_with('p_')) %>% 
+  filter(row_number() < 11) %>% 
+  arrange(tract, sex, race, agecat) %>% 
+  kable() %>% 
+  kable_styling()
+```
+
+
+### Data Summary {.tabset}
+#### Demographics
+Among patients with an existing geocoded address on file.
+```{r message=FALSE, results='asis'}
+
+table_format <-
+  list( 
+       "Age (on June 01, 2020)" =
+         list("Median (IQR)"  = ~ median_iqr(age),
+              "Mean (SD)"     = ~ mean_sd(age)),
+       
+       "Age Category" =
+         list("<= 24"      = ~ n_perc0(agecat == "<=24"),
+              "25-34"      = ~ n_perc0(agecat == "25-34"),
+              "35-44"      = ~ n_perc0(agecat == "35-44"),
+              "45-64"      = ~ n_perc0(agecat == "45-64"),
+              ">= 65"      = ~ n_perc0(agecat == ">=65")
+         ),
+       
+       "Sex" =
+         list("Female"        = ~ n_perc0(sex == "Female"),
+              "Male"          = ~ n_perc0(sex == "Male"),
+              "Unknown"       = ~ n_perc0(sex == "Unknown")),
+       
+       "Race/Ethnicity" =
+         list("Hispanic"      = ~ n_perc0(race == "hispanic"),
+              "NH Black"      = ~ n_perc0(race == "black"),
+              "NH White"      = ~ n_perc0(race == "white"),
+              "NH Asian"      = ~ n_perc0(race == "asian"),
+              "NH Alaskan"    = ~ n_perc0(race == "alaskan"),
+              "NH Hawaian"    = ~ n_perc0(race == "hawaian"),
+              "Multirace"     = ~ n_perc0(race == "multirace"),
+              "Other"         = ~ n_perc0(race == "other"),
+              "Unknown"       = ~ n_perc0(race == "unknown")),
+       
+       "Census Tract" =
+         list('Matched'       = ~ n_perc0(!is.na(education_prob)),
+              'Unmatched'     = ~ n_perc0(is.na(education_prob))),
+       
+       "Education (class)" = 
+         list('Less than high school'   = ~ n_perc0(education_pred=='Less than high school', 
+                                                    show_denom = "never", na_rm = TRUE),
+              'High school graduate'   = ~ n_perc0(education_pred=='High school graduate', 
+                                                    show_denom = "never", na_rm = TRUE),
+              'Some college'   = ~ n_perc0(education_pred=='Some college', 
+                                                    show_denom = "never", na_rm = TRUE),
+              'College graduate'   = ~ n_perc0(education_pred=='College graduate', 
+                                                    show_denom = "never", na_rm = TRUE))
+       )
+
+summary_table(hcv.estimates, table_format)
+```
+
+
+
+#### Probability of Class Assignment
+```{r message=FALSE, results='asis'}
+table_format <-
+  list( 
+    "Education (confidence)" = 
+      list('Median probability'    = ~ median_iqr(education_prob, na_rm=TRUE,
+                                                  show_n = "never"),
+           'Average probability'   = ~ mean_sd(education_prob, na_rm=TRUE,
+                                               show_n = "never"))
+  )
+
+summary_table(hcv.estimates %>% 
+                group_by(education_pred), table_format)
+```
+
+
+### Missing (unmatched) Census Tracts {.tabset}
+```{r message=FALSE}
+
+##################################################################
+#               Missing (unmatched) Census Tracts
+##################################################################
+
+missing_tracts <- 
+  hcv.estimates %>% 
+  filter(race != 'unknown',
+         sex != 'Unknown',
+         agecat != '<=24',
+         is.na(education_pred)) %>% 
+  select(PAT_ID) %>% 
+  left_join(hcv %>% 
+              select(PAT_ID, tract, CITY, STATE_C))
+
+```
+
+
+#### By State
+A few patients have an out of state address on file.
+```{r message=FALSE}
+missing_tracts %>% 
+  group_by(STATE_C) %>% 
+  summarise(N = n_distinct(PAT_ID)) %>% 
+  arrange(desc(N)) %>% 
+  kable() %>% 
+  kable_styling()
+
+```
+
+
+#### By City in Texas
+Many patients have a non-Tarrant County address. However, there are also a few
+patients with a Tarrant County address that did not match with the ACS data. 
+This requires further investigation (there is likely a discrepancy in data
+sources; the ACS tracts are from 2020 whereas the patient tracts may be from
+a previous year or a different data source entirely). Finally, note that there 
+there are a few addresses labeled as "Courthouse"; there may be tracts that are 
+decidedly not sampled by the ACS (or not given a proper Census tract).
+  
+<p class="Notes">
+<strong>Notes</strong>
+Resolving issues with non-Tarrant County addresses is simple; obtain ACS data 
+for the missing counties. However, resolving data source discrepancies might be 
+more difficult. It is free to geocode addresses yet sending large volumes of 
+addresses, particularly from a health care institution, poses a security risk 
+(i.e., if the request is intercepted the addresses may be assumed to be
+patient addresses).
+</p>
+```{r message=FALSE}
+missing_tracts %>% 
+  filter(STATE_C=='TX') %>% 
+  group_by(CITY) %>% 
+  summarise(N = n_distinct(PAT_ID)) %>% 
+  arrange(desc(N)) %>% 
+  kable() %>% 
+  kable_styling()
+
+```
