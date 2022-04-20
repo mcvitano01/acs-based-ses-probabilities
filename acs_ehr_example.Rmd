@@ -49,7 +49,7 @@ editor_options:
 
 # install missing packages
 # ------------------------
-packages.required <- c('vroom', 'dplyr', 'tidyr', 
+packages.required <- c('vroom', 'readxl', 'dplyr', 'tidyr', 
                        'stringr', 'qwraps2', 'kableExtra')
 
 packages.toinstall <- packages.required[!(packages.required %in% installed.packages()[,"Package"])]
@@ -59,9 +59,11 @@ if(length(packages.toinstall)) install.packages(packages.toinstall)
 
 library(vroom)
 library(dplyr)
+library(lubridate)
 library(stringr)
 library(qwraps2)
 library(kableExtra)
+library(ggplot2)
 
 # no scientific notation !
 options(scipen=999)
@@ -85,49 +87,89 @@ options(qwraps2_frmt_digits = 2)
 # (2) Educational attainment by age category
 # (3) Poverty in last 12 months by age category, sex, race, tract
 # ---------------------------------------------------------------
-dir.create(file.path('data'))
+dir.create(file.path('data'), showWarnings = FALSE)
 
-ed_filepath  <- file.path('data', 'educational_attainment.csv')
-age_filepath <- file.path('data', 'agecat_national.csv')
-pov_filepath <- file.path('data', 'povertyt_status_12m.csv')
+ed_filepath  <- file.path('data', 'education-by-sex-race-tract.csv')
+age_filepath <- file.path('data', 'education-by-agecat-tract.csv')
+#pov_filepath <- file.path('data', 'povertyt_status_12m.csv')
 
 
 
-# Tarrant County tracts 
-# see https://www.census.gov/geographies/reference-maps/2020/geo/2020pl-maps/2020-census-tract.html
-# ----------------------------------
-tracts.tarrant.list.census <- 
-  vroom('https://www2.census.gov/geo/maps/DC2020/PL20/st48_tx/censustract_maps/c48439_tarrant/DC20CT_C48439_CT2MS.txt') %>% 
-  mutate(tract = as.character(TRACT),
-         tract = case_when(
-           str_length(tract) == 4 ~ paste0(tract, '.00'),
-           str_length(tract) >4 & str_length(tract) <7 ~ str_pad(tract, 7, side='right', pad='0'),
-           str_length(tract) ==7 ~ tract,
-           TRUE ~ 'INVESTIGATE'
-         ))
+# Map between Census Tracts 2010 -> 2020
+# --------------------------------------
 
-# patient demographics (1:1)
+# https://www.nrcs.usda.gov/wps/portal/nrcs/detail/national/home/?cid=nrcs143_013697
+dfw_counties <- c('251', '367', '439', '497',
+                  '085', '113', '121', '139',
+                  '231', '257', '397')
+
+tract_mapping <- 
+  vroom('data/tab20_tract20_tract10_natl.txt') %>% 
+  mutate(
+    state   = str_sub(GEOID_TRACT_20, 1, 2),
+    county  = str_sub(GEOID_TRACT_20, 3, 5)
+  ) %>% 
+  filter(state == '48', 
+         county %in% dfw_counties) %>% 
+    select(NAMELSAD_TRACT_20, NAMELSAD_TRACT_10) %>% 
+    mutate(
+      # Census 2020 tract (ACS)
+      tract = str_extract(NAMELSAD_TRACT_20, '\\d+\\.*\\d*'),
+      tract = ifelse(!str_detect(tract, fixed('.')),
+                     paste0(tract, '.00'), tract),
+      
+      # Census 2010 tract (EHR)
+      tract10 = str_extract(NAMELSAD_TRACT_10, '\\d+\\.*\\d*'),
+      tract10 = ifelse(!str_detect(tract10, fixed('.')),
+                       paste0(tract10, '.00'), tract10),
+    )
+
+
+# Patient Demographics (1:1)
 # --------------------------
+cancer.path <- file.path('T://EMR Reporting - CEHDR/Cancer Data', 
+                         'Cancer_Survivorship_Patients_through_DEC2021.txt')
+
+cancer.demo.path <- file.path('T://EMR Reporting - CEHDR/Cancer Data', 
+                         'DEMO_2008to2017.xls')
+
 hcv.path <- file.path('H://Documents/_hcv/data/registry', 
                       'HCV_PATIENTS_JAN2022.txt')
 
-# patient address history (1:M)
+hiv.path <- file.path('U://CTR EPI & HC DELIVERY RESEARCH/CEHDR_RESEARCH/WORKING_GROUPS/HIV_WORKING_GROUP/DATA/HIVCOR/Through_Jan_2022', 
+                      'HIV_PATIENTS_JAN2022.txt')
+
+hivcor.path <- file.path('U://CTR EPI & HC DELIVERY RESEARCH/CEHDR_RESEARCH/WORKING_GROUPS/HIV_WORKING_GROUP/DATA/HIVCOR/', 
+                      'HIVCOR_JAN2022_08FEB2022.csv')
+
+# Patient Address History (1:M)
 # -----------------------------
+cancer.geo.path <- file.path('H://Documents/_cehdr/apps/cehdr.registry.map/data-raw', 
+                             'cancer-address-hx-2020-06.txt')
+
 hcv.geo.path <- file.path('H://Documents/_cehdr/apps/cehdr.registry.map/data-raw',
                           'hcv-address-hx-2020-06.txt')
 
-
+hiv.geo.path <- file.path('H://Documents/_cehdr/apps/cehdr.registry.map/data-raw',
+                          'hiv-address-hx-2020-06.txt')
 
 ##################################################################
-#                          Read in data 
+#                          Load data 
 ##################################################################
 
-ed <- vroom::vroom(ed_filepath, col_types = cols(tract=col_character()))
-age <- vroom::vroom(age_filepath)
+ed <- vroom(ed_filepath, col_types = cols(tract=col_character()))
+age <- vroom(age_filepath, col_types = cols(tract=col_character()))
 
-hcv <- vroom::vroom(hcv.path)
-hcv.geo <- vroom::vroom(hcv.geo.path)
+cancer <- vroom(cancer.path)
+cancer.demo <- readxl::read_xls(cancer.demo.path)
+cancer.geo <- vroom(cancer.geo.path, col_types = c(START_DT = 'T'))
 
+hcv <- vroom(hcv.path)
+hcv.geo <- vroom(hcv.geo.path, col_types = c(START_DT = 'T'))
+
+hiv <- vroom(hiv.path)
+hivcor <- vroom(hivcor.path)
+hiv.geo <- vroom(hiv.geo.path, col_types = c(START_DT = 'T'))
 ```
 
 
@@ -135,18 +177,80 @@ hcv.geo <- vroom::vroom(hcv.geo.path)
 ```{r message=FALSE, warning=FALSE}
 
 ##################################################################
-#                   Process HCV Patient Table
+#                   Process Patient Table(s)
 ##################################################################
+
+# only accept patients in Cancer registry demo file
+# -------------------------------------------------
+cancer <- cancer %>% 
+  right_join(cancer.demo %>% 
+               rename(PAT_ID = pat_id,
+                      PAT_SEX = sex,
+                      BIRTH_DATE = date_of_birth) %>% 
+               mutate(PAT_SEX = ifelse(PAT_SEX == 0, 'Female', 'Male')) %>% 
+               select(PAT_ID, PAT_SEX, BIRTH_DATE) %>% 
+               distinct())
+
+rm(cancer.demo)
+
+# only accept verified HIV registry-eligible patients
+# ---------------------------------------------------
+hiv <- hiv %>% right_join(hivcor %>% select(PAT_ID) %>% distinct())
+rm(hivcor)
+
+
+# create a single patient table (to avoid parallel data cleaning)
+# ---------------------------------------------------------------
+pat_cols <- c('PAT_ID', 'PAT_MRN_ID', 'BIRTH_DATE',
+              'PAT_SEX', 'PATIENT_RACE', 'ETHNIC_GROUP_NM')
+
+
+pats <- cancer %>% select(all_of(pat_cols)) %>% mutate(CANCER = 1) %>% 
+  full_join(hcv %>% select(all_of(pat_cols)) %>% mutate(HCV = 1)) %>% 
+  full_join(hiv %>% select(all_of(pat_cols)) %>% mutate(HIV = 1)) %>% 
+  distinct(PAT_ID, .keep_all=TRUE)   # if discrepancies in patient data
+                                     # ... just keep one version
+
+rm(cancer)
+rm(hcv)
+rm(hiv)
+
 
 # keep only most recent address for each patient
 # ----------------------------------------------
-hcv.geo <- hcv.geo %>% 
+cancer.geo <- cancer.geo %>% 
+  filter(!is.na(START_DT)) %>% 
   arrange(PAT_ID, desc(END_DT)) %>% 
-  distinct(PAT_ID, .keep_all=TRUE)
+  distinct(PAT_ID, .keep_all=TRUE) %>% 
+  mutate(census_year = ifelse(year(START_DT) >= 2020, 2020, 2010))
+
+hcv.geo <- hcv.geo %>% 
+  filter(!is.na(START_DT)) %>% 
+  arrange(PAT_ID, desc(END_DT)) %>% 
+  distinct(PAT_ID, .keep_all=TRUE) %>% 
+  mutate(census_year = ifelse(year(START_DT) >= 2020, 2020, 2010))
+
+hiv.geo <- hiv.geo %>% 
+  filter(!is.na(START_DT)) %>% 
+  arrange(PAT_ID, desc(END_DT)) %>% 
+  distinct(PAT_ID, .keep_all=TRUE) %>% 
+  mutate(census_year = ifelse(year(START_DT) >= 2020, 2020, 2010))
+
+pats.geo <- 
+  cancer.geo %>%
+  full_join(hcv.geo) %>%
+  full_join(hiv.geo) %>% 
+  distinct(PAT_ID, .keep_all=TRUE)   # if discrepancies in patient data
+                                     # ... just keep one version
+
+rm(cancer.geo)
+rm(hcv.geo)
+rm(hiv.geo)
+
 
 # patient demographics must match categories in the ACS data
 # ----------------------------------------------------------
-hcv <- hcv %>% 
+pats <- pats %>% 
   mutate(
     race = case_when(
       ETHNIC_GROUP_NM == 'Hispanic, Latino or Spanish ethnicity'   ~ 'hispanic',
@@ -172,18 +276,25 @@ hcv <- hcv %>%
       TRUE ~ 'unknown')
     ) %>% 
   select(PAT_ID, PAT_MRN_ID, BIRTH_DATE, age, agecat,
-         sex, race, PATIENT_RACE, ETHNIC_GROUP_NM) %>% 
-  left_join(hcv.geo) %>% 
-  filter(!is.na(GEOID10)) %>% 
-  mutate(tract = gsub('^[0-9]{5}([0-9]{4})([0-9]{2})[0-9]+', '\\1.\\2', GEOID10),
-         block = substr(GEOID10, 12, 20))
+         sex, race, CANCER, HCV, HIV, PATIENT_RACE, ETHNIC_GROUP_NM) %>% 
+  # get geo-data
+  left_join(pats.geo) %>% 
+  filter(!is.na(GEOID10)) %>%
+  # parse out Census tract/block
+  mutate(tract10 = paste0(str_sub(GEOID10, 6, 9), 
+                          '.', str_sub(GEOID10, 10, 11)),
+         # remove any leading zero's
+         tract10 = str_remove(tract10, "^0+"),
+         # may contain an alpha- suffix
+         block10 = str_sub(GEOID10, 12, 20))
 
 
 # clean up
 # --------
-rm(hcv.geo)
+rm(pats.geo)
 
 ```
+
 
 
 
@@ -202,27 +313,38 @@ rm(hcv.geo)
 # ------------------------------------------------
 estimates <- ed %>% 
   filter(education != 'Total') %>% 
-  select(education, sex, race, tract, estimate, moe, proportion, proportion_moe) %>% 
-  left_join(age %>% select(education, agecat, proportion, proportion_moe) %>% 
+  select(year, county, tract, education, sex, race, 
+         estimate, moe, proportion, proportion_moe) %>% 
+  left_join(age %>% select(year, county, tract, 
+                           education, agecat, proportion, proportion_moe) %>% 
               rename(p_age = proportion, p_age_moe = proportion_moe)) %>% 
   mutate(p = proportion*p_age,
          p_moe = abs(sqrt( (proportion^2 * p_age_moe^2) + (p_age^2 * proportion_moe^2) ))
   )
 
 
-# join HCV patient table with conditional probabilities
-# keep only subset of data fields
-# create fields for max(prob) and predicted education
-# -----------------------------------------------------
-hcv.estimates <- hcv %>% 
-  select(PAT_ID, PAT_MRN_ID, age, agecat, sex, race, tract) %>% 
-  left_join(estimates %>% 
-              select(agecat, sex, race, tract, 
-                     education, p, p_moe)) %>%
+
+
+# 2010
+# ----
+pats.2010.estimates <- pats %>% 
+  select(PAT_ID, PAT_MRN_ID, age, agecat, sex, race, CANCER, HCV, HIV,
+         census_year, tract10, CITY, GEOID10) %>% 
+  filter(census_year==2010) %>% 
+  left_join(estimates %>%
+              filter(year == 2010) %>% 
+              rename(tract10 = tract) %>% 
+              select(agecat, sex, race, tract10, 
+                     education, p, p_moe)) %>% 
+  group_by(PAT_ID) %>% 
+  mutate(tract_count = n_distinct(tract10)) %>% 
+  ungroup() %>%
+  # 
   group_by(PAT_ID) %>% 
   mutate(
     education_pred = first(education, order_by = desc(p)),
-    education_prob = first(p, order_by = desc(p))) %>% 
+    education_prob = first(p, order_by = desc(p))
+    ) %>% 
   ungroup() %>% 
   mutate(
     education_pred = ifelse(education_prob == 0, 'Unknown', education_pred),
@@ -232,12 +354,132 @@ hcv.estimates <- hcv %>%
       education_pred == 'High school graduate'  ~ 2,
       education_pred == 'Some college'          ~ 3,
       education_pred == 'College graduate'      ~ 4,
-      TRUE ~ 99))
+      TRUE ~ 99),
+    
+    # fields are necessary for row-binding later
+    p_avg = NA_real_,
+    tract_changes = 'N/A',
+    county_list = NA_character_,
+    p_list      = NA_character_) %>% 
+  # reorder fields to match counterpart table(s)
+  select(PAT_ID, PAT_MRN_ID, age,
+         agecat, sex, race, CANCER, HCV, HIV,
+         census_year, tract10, education, p, p_list,
+         education_pred, education_prob, education_int,
+         tract_count, tract_changes, county_list)
+
+
+# join HCV patient table with conditional probabilities
+# keep only subset of data fields
+# create fields for max(prob) and predicted education
+# -----------------------------------------------------
+pats.2020.estimates <- pats %>% 
+  filter(census_year==2020) %>% 
+  select(PAT_ID, PAT_MRN_ID, age, agecat, sex, race, CANCER, HCV, HIV, 
+         census_year, tract10, CITY, GEOID10) %>% 
+  # map from Census 2010 -> 2020 tracts
+  left_join(tract_mapping %>% 
+              select(tract, tract10)) %>% 
+  left_join(estimates %>%
+              filter(year == 2020) %>% 
+              select(agecat, sex, race, county, tract, 
+                     education, p) %>% 
+              # some tracts are in multiple counties 
+              # ... all we have is the patient's CITY without a CITY -> COUNTY mapping
+              # ... (e.g., tract-89 becomes tract-211 in 2020 which 
+              #             is in Dallas and Denton counties)
+              # so we'll take the median value (in this case)
+              group_by(tract, agecat, sex, race, education) %>% 
+              mutate(
+                county_list = paste0(county, collapse = ','),
+                p_list = paste0(p, collapse = ','),
+                p = median(p, na.rm = TRUE)) %>% 
+              ungroup() %>% 
+              select(-county) %>% 
+              distinct()
+            ) %>% 
+  group_by(PAT_ID) %>% 
+  mutate(tract_count = n_distinct(tract)) %>% 
+  ungroup()
+
+
+
+pats.2020.estimates.nochanges <- pats.2020.estimates %>% 
+  filter(tract_count == 1) %>% 
+  # find highest probability class prediction
+  group_by(PAT_ID) %>% 
+  mutate(
+    education_pred = first(education, order_by = desc(p)),
+    education_prob = first(p, order_by = desc(p))
+    ) %>% 
+  ungroup() %>% 
+  mutate(
+    education_pred = ifelse(education_prob == 0, 'Unknown', education_pred),
+    education_int  = case_when(
+      education_pred == 'Unknown'               ~ 88,
+      education_pred == 'Less than high school' ~ 1,
+      education_pred == 'High school graduate'  ~ 2,
+      education_pred == 'Some college'          ~ 3,
+      education_pred == 'College graduate'      ~ 4,
+      TRUE ~ 99),
+    
+    # fields are necessary for row-binding later
+    p_avg = NA_real_,
+    tract_changes = 'N/A',
+    county_list = NA_character_,
+    p_list      = NA_character_) %>% 
+  # reorder fields to match counterpart table(s)
+  select(PAT_ID, PAT_MRN_ID, age,
+         agecat, sex, race, CANCER, HCV, HIV, 
+         census_year, tract10, education, p, p_list,
+         education_pred, education_prob, education_int,
+         tract_count, tract_changes, county_list)
+
+
+pats.2020.estimates.changes <- pats.2020.estimates %>% 
+  filter(tract_count >= 2) %>%
+  group_by(PAT_ID, education) %>% 
+  mutate(
+    # keep all tracts & counties involved in predictions
+    tract_changes = paste0(tract, collapse = ','),
+    county_list = paste0(county_list, collapse = ','),
+    p_list = paste0(p, collapse = ','),
+    # take median prediction
+    p = median(p, na.rm = TRUE)
+    ) %>% 
+  # keep only non-redundant info (after taking median of probabilities)
+  ungroup(PAT_ID, education) %>% 
+  select(-c(tract)) %>% 
+  distinct() %>%
+  # find highest probability class prediction
+  group_by(PAT_ID) %>% 
+  mutate(
+    education_pred = first(education, order_by = desc(p)),
+    education_prob = first(p, order_by = desc(p))
+    ) %>% 
+  ungroup() %>% 
+  mutate(
+    education_pred = ifelse(education_prob == 0, 'Unknown', education_pred),
+    education_int  = case_when(
+      education_pred == 'Unknown'               ~ 88,
+      education_pred == 'Less than high school' ~ 1,
+      education_pred == 'High school graduate'  ~ 2,
+      education_pred == 'Some college'          ~ 3,
+      education_pred == 'College graduate'      ~ 4,
+      TRUE ~ 99)
+  ) %>% 
+  # reorder fields to match counterpart tables
+  select(PAT_ID, PAT_MRN_ID, age,
+         agecat, sex, race, CANCER, HCV, HIV,
+         census_year, tract10, education, p, p_list,
+         education_pred, education_prob, education_int,
+         tract_count, tract_changes, county_list)
+
   
 
 # pivot probabilities for each educational class (long -> wide)
 # -------------------------------------------------------------
-p <- tidyr::pivot_wider(hcv.estimates,
+p.2010 <- tidyr::pivot_wider(pats.2010.estimates,
                    id_cols = PAT_ID,
                    names_from = education, 
                    names_prefix = 'p_',
@@ -245,35 +487,75 @@ p <- tidyr::pivot_wider(hcv.estimates,
                    values_from = p) %>% 
   select(-'p_NA')
 
-# pivot margins of error for each educational class (long -> wide)
-# ----------------------------------------------------------------
-# p_moe <- tidyr::pivot_wider(hcv.estimates,
-#                    id_cols = PAT_ID,
-#                    names_from = education, 
-#                    names_prefix = 'moe_',
-#                    names_repair = 'universal',
-#                    values_from = p_moe) %>% 
-#   select(-'moe_NA')
+p.2020.nochanges <- tidyr::pivot_wider(pats.2020.estimates.nochanges,
+                   id_cols = PAT_ID,
+                   names_from = education, 
+                   names_prefix = 'p_',
+                   names_repair = 'universal',
+                   values_from = p) %>% 
+  select(-'p_NA')
 
 
-# join wide elements (p, moe) back with HCV patient table
-# -------------------------------------------------------
-hcv.estimates <- hcv.estimates %>% 
+p.2020.changes <- tidyr::pivot_wider(pats.2020.estimates.changes,
+                   id_cols = PAT_ID,
+                   names_from = education, 
+                   names_prefix = 'p_',
+                   names_repair = 'universal',
+                   values_from = p) %>% 
+  select(-'p_NA')
+
+
+# join wide elements (p) back with patient table
+# ----------------------------------------------
+pats.2010.estimates <- 
+  pats.2010.estimates %>% 
   distinct(PAT_ID, .keep_all=TRUE) %>% 
-  select(-c(education, p, p_moe)) %>% 
-  left_join(p)
-  #left_join(p_moe)
+  select(-c(education, p)) %>% 
+  left_join(p.2010)
 
+pats.2020.estimates.nochanges <- 
+  pats.2020.estimates.nochanges %>% 
+  distinct(PAT_ID, .keep_all=TRUE) %>% 
+  select(-c(education, p)) %>% 
+  left_join(p.2020.nochanges)
+
+pats.2020.estimates.changes <- 
+  pats.2020.estimates.changes %>% 
+  distinct(PAT_ID, .keep_all=TRUE) %>% 
+  select(-c(education, p)) %>% 
+  left_join(p.2020.changes)
+
+
+# combine all patients predictions
+# --------------------------------
+pats.estimates <- rbind(pats.2010.estimates,
+                        pats.2020.estimates.nochanges,
+                        pats.2020.estimates.changes)
+
+# add unique counties (remove duplicates in list)
+# -----------------------------------------------
+pats.estimates$county_list_unique <- 
+  sapply(strsplit(pats.estimates$county_list, ','), 
+       function(x) toString(unique(x)))
+
+# clean up
+# --------
+rm(list=c('pats.2010.estimates', 
+          'pats.2020.estimates.nochanges', 
+          'pats.2020.estimates.changes'))
 
 # investigate missing Census tracts (not present in ACS data)
 # -----------------------------------------------------------
-missing_tracts <- hcv.estimates %>% filter(is.na(p_Less.than.high.school)) %>% 
-  distinct(tract)
+missing_tracts <- 
+  pats.estimates %>% 
+  filter(is.na(p_Less.than.high.school)) %>% 
+  distinct(tract10)
 
 
-# write out dataset
-# -----------------
-hcv.estimates %>% vroom_write('hcv-registry-acs-estimates.csv', delim = '\t')
+# write to disk
+# -------------
+pats.estimates %>% 
+  vroom_write('cehdr-registry-acs-estimates.csv', delim = '\t')
 ```
 
 
@@ -284,19 +566,37 @@ hcv.estimates %>% vroom_write('hcv-registry-acs-estimates.csv', delim = '\t')
 #                   Table an Example (5 patients)
 ##################################################################
 
-hcv.estimates %>% 
-  select(PAT_ID, agecat, sex, race, tract, 
-         education_pred, starts_with('p_')) %>% 
+pats.estimates %>% 
+  #filter(tract_changes != 'N/A') %>% 
+  select(PAT_ID, education_pred, starts_with('p_')) %>% 
+  select(-p_list) %>% 
   filter(row_number() < 11) %>% 
-  arrange(tract, sex, race, agecat) %>% 
+  #arrange(tract10, sex, race, agecat) %>% 
   kable() %>% 
-  kable_styling()
+  kable_styling(bootstrap_options = c('striped', 'hover'))
 ```
 
 
-### Data Summary {.tabset}
-#### Demographics
-Among patients with an existing geocoded address on file.
+### Probability of Class Assignment
+```{r message=FALSE, results='asis'}
+table_format <-
+  list( 
+    "Education (confidence)" = 
+      list('Median probability'    = ~ median_iqr(education_prob, na_rm=TRUE,
+                                                  show_n = "never"),
+           'Average probability'   = ~ mean_sd(education_prob, na_rm=TRUE,
+                                               show_n = "never"))
+  )
+
+summary_table(pats.estimates %>% 
+                group_by(education_pred), table_format)
+```
+
+
+### Demographics {.tabset}
+Among patients with an existing geocoded address on file 
+(last updated June 2020).
+
 ```{r message=FALSE, results='asis'}
 
 table_format <-
@@ -310,8 +610,7 @@ table_format <-
               "25-34"      = ~ n_perc0(agecat == "25-34"),
               "35-44"      = ~ n_perc0(agecat == "35-44"),
               "45-64"      = ~ n_perc0(agecat == "45-64"),
-              ">= 65"      = ~ n_perc0(agecat == ">=65")
-         ),
+              ">= 65"      = ~ n_perc0(agecat == ">=65")),
        
        "Sex" =
          list("Female"        = ~ n_perc0(sex == "Female"),
@@ -329,9 +628,16 @@ table_format <-
               "Other"         = ~ n_perc0(race == "other"),
               "Unknown"       = ~ n_perc0(race == "unknown")),
        
-       "Census Tract" =
-         list('Matched'       = ~ n_perc0(!is.na(education_prob)),
-              'Unmatched'     = ~ n_perc0(is.na(education_prob))),
+       "Census Tract (2010)" =
+         list('Matched'       = ~ n_perc0(census_year == 2010 & !is.na(education_prob)),
+              'Unmatched'     = ~ n_perc0(census_year == 2010 & is.na(education_prob))),
+
+       "Census Tract (2020)" =
+         list('Matched'       = ~ n_perc0(census_year == 2020 & !is.na(education_prob)),
+              'Unmatched'     = ~ n_perc0(census_year == 2020 & is.na(education_prob)),
+              'Modified'      = ~ n_perc0(census_year == 2020 & tract_changes != 'N/A'),
+              'Multi-county'  = ~ n_perc0(census_year == 2020 & str_detect(county_list_unique, ',')),
+              'Avg. changes'  = ~ mean_sd(census_year == 2020 & tract_count, na_rm = TRUE)),
        
        "Education (class)" = 
          list('Less than high school'   = ~ n_perc0(education_pred=='Less than high school', 
@@ -344,25 +650,156 @@ table_format <-
                                                     show_denom = "never", na_rm = TRUE))
        )
 
-summary_table(hcv.estimates, table_format)
+demographics <- 
+  cbind(summary_table(pats.estimates %>% filter(CANCER == 1), table_format),
+        summary_table(pats.estimates %>% filter(HCV == 1), table_format),
+        summary_table(pats.estimates %>% filter(HIV == 1), table_format))
+
+cancer_n <-  n_distinct(pats.estimates[pats.estimates$CANCER==1,]$PAT_ID)
+hcv_n <-  n_distinct(pats.estimates[pats.estimates$HCV==1,]$PAT_ID)
+hiv_n <-  n_distinct(pats.estimates[pats.estimates$HIV==1,]$PAT_ID)
+
+print(demographics, 
+      cnames = c(paste0('Cancer (n = ', cancer_n, ')'),
+                 paste0('HCV (n = ', hcv_n, ')'),
+                 paste0('HIV (n = ', hiv_n, ')')),
+      rtitle = "Registry Demographics", 
+      align = "lccc")
+```
+<p class="Notes">
+The Cancer Survivorship registry was last updated December 2021.
+<br>
+The HCV registry was last updated January 2022.
+<br>
+The HIV registry was last updated January 2022. Only patients meeting HIVCOR 
+eligibility requirements were included.
+<br>
+**Census year**: Patients whose current address in their medical record was last 
+updated/modified after January 2020 required mapping 2010 Census tracts to 
+their 2020 labels (these tract changes are supplied by the US Census Bureau). 
+<br>
+**Modified tracts**: If a 2020 tract was split into multiple 2020 tracts then 
+any associated predictions of educational attainment were summarized as the
+median of the new 2020 tracts involved in the split.
+<br>
+**Multi-county tracts**: Similarly, some tracts exist in multiple counties and 
+have multiple estimates of educational attainment in the ACS data. However,
+the patient geocoded address data only includes the city in which the address
+is located. Therefore, any predictions of educational attainment were summarized
+as the median of the tracts from any counties involved.
+</p>
+
+
+### Highest Level of Education Achieved {.tabset}
+#### Sex
+```{r message=FALSE}
+
+# convert to ordered factors for plotting
+# ---------------------------------------
+pats.estimates$sex <- factor(pats.estimates$sex,
+                      levels=c('Female', 'Male', 'Unknown'))
+
+pats.estimates$agecat <- factor(pats.estimates$agecat,
+                      levels=c('<=24', '25-34', '35-44', '45-64', '>=65'))
+ 
+pats.estimates$education_pred <- factor(pats.estimates$education_pred, 
+                         levels=c('Unknown', 
+                                  'Less than high school',
+                                  'High school graduate',
+                                  'Some college',
+                                  'College graduate'))
+
+pats.estimates %>% 
+  filter(!is.na(education_pred), education_pred != 'Unknown') %>% 
+  group_by(sex, education_pred) %>% 
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n)) %>% 
+  ungroup() %>% 
+  ggplot(aes(fill=sex, y=freq, x=education_pred, label=round(freq, 2))) + 
+  geom_bar(position="stack", stat="identity") +
+  geom_text(size = 2.8,
+            position = position_stack(vjust = 0.5)) +
+  #facet_wrap(~sex*race, ncol = 2) + 
+  coord_flip() +
+  labs(
+    x = 'Highest Level of Education Achieved',
+    y = 'Proportion',
+    #title = 'Female -- Tract 1115.67',
+    fill = 'Sex') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
+```
+
+
+#### Age
+```{r message=FALSE}
+
+pats.estimates %>% 
+  filter(!is.na(education_pred), education_pred != 'Unknown') %>% 
+  group_by(agecat, education_pred) %>% 
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n)) %>% 
+  ungroup() %>% 
+  ggplot(aes(fill=agecat, y=freq, x=education_pred)) + 
+  geom_bar(position="dodge", stat="identity") +
+  #facet_wrap(~sex*race, ncol = 2) + 
+  coord_flip() +
+  labs(
+    x = 'Highest Level of Education Achieved',
+    y = 'Proportion',
+    #title = 'Female -- Tract 1115.67',
+    fill = 'Age Category') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
+```
+
+
+#### Race/Ethnicity
+```{r message=FALSE}
+
+pats.estimates %>% 
+  filter(!is.na(education_pred), education_pred != 'Unknown') %>% 
+  group_by(race, education_pred) %>% 
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n)) %>% 
+  ungroup() %>% 
+  ggplot(aes(fill=race, y=freq, x=education_pred)) + 
+  geom_bar(position="dodge", stat="identity") +
+  #facet_wrap(~sex*race, ncol = 2) + 
+  coord_flip() +
+  labs(
+    x = 'Highest Level of Education Achieved',
+    y = 'Proportion',
+    #title = 'Female -- Tract 1115.67',
+    fill = 'Race') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
 ```
 
 
 
-#### Probability of Class Assignment
-```{r message=FALSE, results='asis'}
-table_format <-
-  list( 
-    "Education (confidence)" = 
-      list('Median probability'    = ~ median_iqr(education_prob, na_rm=TRUE,
-                                                  show_n = "never"),
-           'Average probability'   = ~ mean_sd(education_prob, na_rm=TRUE,
-                                               show_n = "never"))
-  )
-
-summary_table(hcv.estimates %>% 
-                group_by(education_pred), table_format)
+#### Age and Race/Ethnicity
+```{r message=FALSE}
+pats.estimates %>% 
+  filter(!is.na(education_pred), education_pred != 'Unknown') %>% 
+  filter(race %in% c('black', 'hispanic', 'white')) %>% 
+  group_by(race, agecat, education_pred) %>% 
+  summarise(n = n()) %>%
+  mutate(freq = n / sum(n)) %>% 
+  ungroup() %>% 
+  ggplot(aes(fill=race, y=freq, x=education_pred)) + 
+  geom_bar(position="dodge", stat="identity") +
+  facet_wrap(~agecat, ncol = 4) + 
+  coord_flip() +
+  labs(
+    x = 'Highest Level of Education Achieved',
+    y = 'Proportion',
+    #title = 'Female -- Tract 1115.67',
+    fill = 'Race') + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
+        plot.title = element_text(hjust = 0.5))
 ```
+
 
 
 ### Missing (unmatched) Census Tracts {.tabset}
@@ -373,20 +810,18 @@ summary_table(hcv.estimates %>%
 ##################################################################
 
 missing_tracts <- 
-  hcv.estimates %>% 
+  pats.estimates %>% 
   filter(race != 'unknown',
          sex != 'Unknown',
          agecat != '<=24',
          is.na(education_pred)) %>% 
   select(PAT_ID) %>% 
-  left_join(hcv %>% 
-              select(PAT_ID, tract, CITY, STATE_C))
-
+  left_join(pats %>% 
+              select(PAT_ID, tract10, CITY, STATE_C))
 ```
 
 
 #### By State
-A few patients have an out of state address on file.
 ```{r message=FALSE}
 missing_tracts %>% 
   group_by(STATE_C) %>% 
@@ -394,28 +829,10 @@ missing_tracts %>%
   arrange(desc(N)) %>% 
   kable() %>% 
   kable_styling()
-
 ```
 
 
 #### By City in Texas
-Many patients have a non-Tarrant County address. However, there are also a few
-patients with a Tarrant County address that did not match with the ACS data. 
-This requires further investigation (there is likely a discrepancy in data
-sources; the ACS tracts are from 2020 whereas the patient tracts may be from
-a previous year or a different data source entirely). Finally, note that there 
-there are a few addresses labeled as "Courthouse"; there may be tracts that are 
-decidedly not sampled by the ACS (or not given a proper Census tract).
-  
-<p class="Notes">
-<strong>Notes</strong>
-Resolving issues with non-Tarrant County addresses is simple; obtain ACS data 
-for the missing counties. However, resolving data source discrepancies might be 
-more difficult. It is free to geocode addresses yet sending large volumes of 
-addresses, particularly from a health care institution, poses a security risk 
-(i.e., if the request is intercepted the addresses may be assumed to be
-patient addresses).
-</p>
 ```{r message=FALSE}
 missing_tracts %>% 
   filter(STATE_C=='TX') %>% 
@@ -424,5 +841,4 @@ missing_tracts %>%
   arrange(desc(N)) %>% 
   kable() %>% 
   kable_styling()
-
 ```

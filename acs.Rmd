@@ -30,7 +30,9 @@ estimates of the following probabilities for an individual based on their age
   **(1)** highest level of education achieved  
   **(2)** having experienced income below/above the Federal 
 poverty level within the preceding 12 months 
-
+  
+See [wikipedia](https://en.wikipedia.org/wiki/Dallas%E2%80%93Fort_Worth_metroplex) 
+for a list of counties within the Dallas–Fort Worth–Arlington MSA.
 ```{r message=FALSE}
 
 ##################################################################
@@ -69,6 +71,7 @@ if(length(packages.toinstall)) install.packages(packages.toinstall)
 
 
 library(tidycensus)
+library(vroom)
 library(dplyr)
 library(stringr)
 library(readr)
@@ -107,6 +110,42 @@ pov_vars <- v20 %>%
   distinct(concept, name_stub)
 ```
 
+```{r message=FALSE}
+
+##################################################################
+#                   Description of Functions
+##################################################################
+
+# Functions to make API calls
+# ---------------------------
+#  -> Define variables to collect
+#  -> Make call
+# 
+# (1) request_ed_by_sex_race_tract
+# (2) request_ed_by_age_tract
+
+
+# Functions to create dataframes from API returns
+# -----------------------------------------------
+#  -> Call function to make API call
+#  -> Aggregate estimates as needed
+#
+# (1) create_ed_by_sex_race_tract_df
+# (2) create_ed_by_age_tract_df
+
+
+# Master function to make all API calls and create dataframes
+# -----------------------------------------------------------
+#  -> If dataset does not exist on disk:
+#       -> Call functions to create dataframes
+#       -> Write dataframes to disk
+#
+#  -> Else:
+#       -> Load from disk
+#
+# (1) make_all_education_api_calls
+```
+
 
 
 ```{r message=FALSE, warning=FALSE}
@@ -118,7 +157,7 @@ pov_vars <- v20 %>%
 
 # Pr[educational attainment | sex, race/ethnicity, Census tract]
 # ----------------------------------------------------------------
-request_ed_by_tract <- function(raceth){
+request_ed_by_sex_race_tract <- function(raceth, county, year){
   varlist <- c('C15002A', 'C15002B', 'C15002C', 'C15002D',
                'C15002E', 'C15002F', 'C15002G', 'C15002I')
   
@@ -141,8 +180,8 @@ request_ed_by_tract <- function(raceth){
                                  female_some_college = paste0(varlist[raceth], "_010"),
                                  female_college_graduate = paste0(varlist[raceth], "_011")),
                     state='TX',
-                    county='Tarrant',
-                    year = 2020,
+                    county=county,
+                    year = year,
                     moe_level=95)
   
   return(df)
@@ -152,10 +191,10 @@ request_ed_by_tract <- function(raceth){
 
 # Pr[educational attainment | age]
 # ----------------------------------
-request_age_for_us <- function(){
+request_ed_by_age_tract <- function(county, year){
   
   df <- get_acs(
-    geography = "us", 
+    geography = "tract", 
     survey = 'acs5',
     variables = c(# male
       male_25_34_less_9       = paste0('B15001', "_012"),
@@ -223,7 +262,9 @@ request_age_for_us <- function(){
       female_65_pl_bachelors    = paste0('B15001', "_082"),
       female_65_pl_graduate     = paste0('B15001', "_083")
       ),
-    year = 2020,
+    state='TX',
+    county=county,
+    year = year,
     moe_level=95)
   
   return(df)
@@ -236,51 +277,54 @@ request_age_for_us <- function(){
 # Pr[age category | sex, race/ethnicity, Census tract)
 # -------------------------------------------------------------
 # ... B01001A == "Sex by Age" ... with smaller age categories
-request_age_by_tract <- function(raceth){
-  varlist <- c('B01001A', 'B01001B', 'B01001C', 'B01001D',
-               'B01001E', 'B01001F', 'B01001G', 'B01001I')
-  
-  names(varlist) <- c('white', 'black', 'alaskan', 'asian', 
-                      'hawaian', 'other', 'multirace', 'hispanic')
-  
-  df <- get_acs(geography = "tract", 
-                   survey = 'acs5',
-                   variables = c(total      = paste0(varlist[raceth], "_001"),
-                                 # male
-                                 male       = paste0(varlist[raceth], "_002"),
-                                 male_25_29 = paste0(varlist[raceth], "_009"),
-                                 male_30_34 = paste0(varlist[raceth], "_010"),
-                                 male_35_44 = paste0(varlist[raceth], "_011"),
-                                 male_45_54 = paste0(varlist[raceth], "_012"),
-                                 male_55_64 = paste0(varlist[raceth], "_013"),
-                                 male_65_74 = paste0(varlist[raceth], "_014"),
-                                 male_75_84 = paste0(varlist[raceth], "_015"),
-                                 male_85_pl = paste0(varlist[raceth], "_016"),
-                                 # female
-                                 female       = paste0(varlist[raceth], "_017"),
-                                 female_25_29 = paste0(varlist[raceth], "_024"),
-                                 female_30_34 = paste0(varlist[raceth], "_025"),
-                                 female_35_44 = paste0(varlist[raceth], "_026"),
-                                 female_45_54 = paste0(varlist[raceth], "_027"),
-                                 female_55_64 = paste0(varlist[raceth], "_028"),
-                                 female_65_74 = paste0(varlist[raceth], "_029"),
-                                 female_75_84 = paste0(varlist[raceth], "_030"),
-                                 female_85_pl = paste0(varlist[raceth], "_031")
-                                 ),
-                    state='TX',
-                    county='Tarrant',
-                    year = 2020,
-                    moe_level=95)
-  
-  return(df)
-}
+
+# DEPRECATED -- not used in calculating joint probability
+
+# request_age_by_tract <- function(raceth, county){
+#   varlist <- c('B01001A', 'B01001B', 'B01001C', 'B01001D',
+#                'B01001E', 'B01001F', 'B01001G', 'B01001I')
+#   
+#   names(varlist) <- c('white', 'black', 'alaskan', 'asian', 
+#                       'hawaian', 'other', 'multirace', 'hispanic')
+#   
+#   df <- get_acs(geography = "tract", 
+#                    survey = 'acs5',
+#                    variables = c(total      = paste0(varlist[raceth], "_001"),
+#                                  # male
+#                                  male       = paste0(varlist[raceth], "_002"),
+#                                  male_25_29 = paste0(varlist[raceth], "_009"),
+#                                  male_30_34 = paste0(varlist[raceth], "_010"),
+#                                  male_35_44 = paste0(varlist[raceth], "_011"),
+#                                  male_45_54 = paste0(varlist[raceth], "_012"),
+#                                  male_55_64 = paste0(varlist[raceth], "_013"),
+#                                  male_65_74 = paste0(varlist[raceth], "_014"),
+#                                  male_75_84 = paste0(varlist[raceth], "_015"),
+#                                  male_85_pl = paste0(varlist[raceth], "_016"),
+#                                  # female
+#                                  female       = paste0(varlist[raceth], "_017"),
+#                                  female_25_29 = paste0(varlist[raceth], "_024"),
+#                                  female_30_34 = paste0(varlist[raceth], "_025"),
+#                                  female_35_44 = paste0(varlist[raceth], "_026"),
+#                                  female_45_54 = paste0(varlist[raceth], "_027"),
+#                                  female_55_64 = paste0(varlist[raceth], "_028"),
+#                                  female_65_74 = paste0(varlist[raceth], "_029"),
+#                                  female_75_84 = paste0(varlist[raceth], "_030"),
+#                                  female_85_pl = paste0(varlist[raceth], "_031")
+#                                  ),
+#                     state='TX',
+#                     county=county,
+#                     year = 2020,
+#                     moe_level=95)
+#   
+#   return(df)
+# }
 
 
 
 # Pr[educational attainment | age category, sex, race/ethnicity, Census tract]
 # -----------------------------------------------------------------------------
 # https://data.census.gov/cedsci/table?q=B17001
-request_below_poverty_by_tract <- function(raceth){
+request_below_poverty_by_tract <- function(raceth, county, year){
   varlist <- c('B17001A', 'B17001B', 'B17001C', 'B17001D',
                'B17001E', 'B17001F', 'B17001G', 'B17001I')
   
@@ -308,8 +352,8 @@ request_below_poverty_by_tract <- function(raceth){
                                  female_75_pl = paste0(varlist[raceth], "_030")
                                  ),
                    state='TX',
-                   county='Tarrant',
-                   year = 2020,
+                   county=county,
+                   year = year,
                    moe_level=95) %>% 
     mutate(poverty_status = 'Below')
   
@@ -335,8 +379,8 @@ request_below_poverty_by_tract <- function(raceth){
                                  female_75_pl = paste0(varlist[raceth], "_059")
                                  ),
                    state='TX',
-                   county='Tarrant',
-                   year = 2020,
+                   county=county,
+                   year = year,
                    moe_level=95) %>% 
     mutate(poverty_status = 'Above')
   
@@ -355,16 +399,16 @@ request_below_poverty_by_tract <- function(raceth){
 
 # Race/ethnicity-specific proportions of (education, sex) by tract
 # ----------------------------------------------------------------
-create_ed_by_tract_df <- function(){
+create_ed_by_sex_race_tract_df <- function(county, year){
   # Educational Attainment
-  white <- request_ed_by_tract('white') %>% mutate(race = 'white')
-  black <- request_ed_by_tract('black') %>% mutate(race = 'black')
-  alaskan <- request_ed_by_tract('alaskan') %>% mutate(race = 'alaskan')
-  asian <- request_ed_by_tract('asian') %>% mutate(race = 'asian')
-  hawaian <- request_ed_by_tract('hawaian') %>% mutate(race = 'hawaian')
-  other <- request_ed_by_tract('other') %>% mutate(race = 'other')
-  multirace <- request_ed_by_tract('multirace') %>% mutate(race = 'multirace')
-  hispanic <- request_ed_by_tract('hispanic') %>% mutate(race = 'hispanic')
+  white <- request_ed_by_sex_race_tract('white', county, year) %>% mutate(race = 'white')
+  black <- request_ed_by_sex_race_tract('black', county, year) %>% mutate(race = 'black')
+  alaskan <- request_ed_by_sex_race_tract('alaskan', county, year) %>% mutate(race = 'alaskan')
+  asian <- request_ed_by_sex_race_tract('asian', county, year) %>% mutate(race = 'asian')
+  hawaian <- request_ed_by_sex_race_tract('hawaian', county, year) %>% mutate(race = 'hawaian')
+  other <- request_ed_by_sex_race_tract('other', county, year) %>% mutate(race = 'other')
+  multirace <- request_ed_by_sex_race_tract('multirace', county, year) %>% mutate(race = 'multirace')
+  hispanic <- request_ed_by_sex_race_tract('hispanic', county, year) %>% mutate(race = 'hispanic')
   
   # combine all requests
   ed <- rbind(white, black, alaskan, asian, hawaian, other, multirace, hispanic)
@@ -372,13 +416,11 @@ create_ed_by_tract_df <- function(){
   # extract Census tract from text
   ed <- ed %>% 
     mutate(
+      year=year,
+      county=county,
       tract = str_extract(NAME, '\\d+\\.*\\d*'),
-      tract = case_when(
-           str_length(tract) == 4 ~ paste0(tract, '.00'),
-           str_length(tract) >4 & str_length(tract) <7 ~ str_pad(tract, 7, side='right', pad='0'),
-           str_length(tract) ==7 ~ tract,
-           TRUE ~ 'INVESTIGATE'
-         ),
+      tract = ifelse(!str_detect(tract, fixed('.')),
+                     paste0(tract, '.00'), tract),
       sex = case_when(
         grepl('female', variable) ~ 'Female',
         grepl('male', variable)   ~ 'Male',
@@ -414,7 +456,7 @@ create_ed_by_tract_df <- function(){
            ) %>% 
     # clean up
     rename(geoid=GEOID, name=NAME) %>%
-    distinct(education, sex, race, tract, .keep_all=TRUE)
+    distinct(year, county, tract, education, sex, race, .keep_all=TRUE)
   
   return(ed)
   
@@ -422,13 +464,18 @@ create_ed_by_tract_df <- function(){
 
 
 
-# National proportions of (education, age) ... marginalized over sex
+# 
 # ------------------------------------------------------------------
-create_age_df <- function(){
-  age <- request_age_for_us()
+create_ed_by_age_tract_df <- function(county, year){
+  age <- request_ed_by_age_tract(county, year)
   
   age <- age %>% 
     mutate(
+      year = year,
+      county=county,
+      tract = str_extract(NAME, '\\d+\\.*\\d*'),
+      tract = ifelse(!str_detect(tract, fixed('.')),
+                     paste0(tract, '.00'), tract),
       sex = case_when(
         grepl('female', variable) ~ 'Female',
         grepl('male', variable)   ~ 'Male',
@@ -446,22 +493,23 @@ create_age_df <- function(){
         grepl('associates|bachelors|graduate', variable)   ~ 'College graduate',
         TRUE ~ 'Total')
       ) %>% 
-    group_by(education, agecat) %>% 
+    group_by(tract, education, agecat) %>% 
     mutate(estimate = sum(estimate),
            moe = abs(sqrt( sum(moe^2) ))
     ) %>% 
-    ungroup(education, agecat) %>%
-    select(education, agecat, estimate, moe) %>% 
+    ungroup(tract, education, agecat) %>%
+    select(year, county, tract,
+           education, agecat, estimate, moe) %>% 
     distinct() %>% 
-    group_by(agecat) %>% 
+    group_by(tract, agecat) %>% 
     mutate(denom = sum(estimate),
            moe_denom = abs(sqrt( sum(moe^2) ))
            ) %>% 
-    ungroup() %>% 
+    ungroup(tract, agecat) %>% 
     mutate(proportion = estimate/denom,
            proportion_moe = abs(sqrt((moe^2) - ((estimate/denom)^2 * moe_denom)))/denom
     ) %>%
-    distinct(education, agecat, .keep_all=TRUE)
+    distinct(year, county, tract, education, agecat, .keep_all=TRUE)
   
   return(age)
   
@@ -471,16 +519,16 @@ create_age_df <- function(){
 
 # Race/ethnicity-specific proportions of poverty status by by (tract, sex, age)
 # -----------------------------------------------------------------------------
-create_poverty_by_tract_df <- function(){
+create_poverty_by_tract_df <- function(county, year){
   # Educational Attainment
-  white <- request_below_poverty_by_tract('white') %>% mutate(race = 'white')
-  black <- request_below_poverty_by_tract('black') %>% mutate(race = 'black')
-  alaskan <- request_below_poverty_by_tract('alaskan') %>% mutate(race = 'alaskan')
-  asian <- request_below_poverty_by_tract('asian') %>% mutate(race = 'asian')
-  hawaian <- request_below_poverty_by_tract('hawaian') %>% mutate(race = 'hawaian')
-  other <- request_below_poverty_by_tract('other') %>% mutate(race = 'other')
-  multirace <- request_below_poverty_by_tract('multirace') %>% mutate(race = 'multirace')
-  hispanic <- request_below_poverty_by_tract('hispanic') %>% mutate(race = 'hispanic')
+  white <- request_below_poverty_by_tract('white', county, year) %>% mutate(race = 'white')
+  black <- request_below_poverty_by_tract('black', county, year) %>% mutate(race = 'black')
+  alaskan <- request_below_poverty_by_tract('alaskan', county, year) %>% mutate(race = 'alaskan')
+  asian <- request_below_poverty_by_tract('asian', county, year) %>% mutate(race = 'asian')
+  hawaian <- request_below_poverty_by_tract('hawaian', county, year) %>% mutate(race = 'hawaian')
+  other <- request_below_poverty_by_tract('other', county, year) %>% mutate(race = 'other')
+  multirace <- request_below_poverty_by_tract('multirace', county, year) %>% mutate(race = 'multirace')
+  hispanic <- request_below_poverty_by_tract('hispanic', county, year) %>% mutate(race = 'hispanic')
   
   # combine all requests
   pov <- rbind(white, black, alaskan, asian, hawaian, other, multirace, hispanic)
@@ -489,11 +537,8 @@ create_poverty_by_tract_df <- function(){
   pov <- pov %>% 
     mutate(
       tract = str_extract(NAME, '\\d+\\.*\\d*'),
-      tract = case_when(
-        str_length(tract) == 4 ~ paste0(tract, '.00'),
-        str_length(tract) >4 & str_length(tract) <7 ~ str_pad(tract, 7, side='right', pad='0'),
-        str_length(tract) ==7 ~ tract,
-        TRUE ~ 'INVESTIGATE'),
+      tract = ifelse(!str_detect(tract, fixed('.')),
+                     paste0(tract, '.00'), tract),
       sex = case_when(
         grepl('female', variable) ~ 'Female',
         grepl('male', variable)   ~ 'Male',
@@ -549,53 +594,141 @@ create_poverty_by_tract_df <- function(){
 ```{r message=FALSE, warning=FALSE}
 
 ##################################################################
-#                          Read in data 
-#               or Make API calls and save output
+#                          Load data 
+#               or Make API calls and write to disk
 ##################################################################
 
 dir.create(file.path('data'), showWarnings = FALSE)
 
-ed_filepath  <- file.path('data', 'educational_attainment.csv')
-age_national_filepath <- file.path('data', 'agecat_national.csv')
-pov_filepath <- file.path('data', 'povertyt_status_12m.csv')
+ed_filepath  <- file.path('data', 'education-by-sex-race-tract.csv')
+age_filepath <- file.path('data', 'education-by-agecat-tract.csv')
+#pov_filepath <- file.path('data', 'poverty_status_12m.csv')
 
-# READ tract as CHARACTER!!!
 
-# Get educational attainment data
-# -------------------------------
-if(file.exists(ed_filepath)){
+
+make_all_education_api_calls <- function() {
+  # For each YEAR IN (2010, 2020) and COUNTY in the DFW metroplex (two MSAs),
+  #   make an API call requesting educational attainment estimates:
+  #     -> by (SEX, RACE, CENSUS TRACT)
+  #     -> by (AGE, CENSUS TRACT)
+  #
+  # Census tracts are updated every year ... however, patient addresses in EHR 
+  #   are geocoded to the Decennial Census:
+  #     -> 2020 data is required for patients whose address was last
+  #         updated/verified after January 2020
+  #
+  #     -> 2010 data is required for all other patients
+  
+  # ACS data years
+  years = c(2010, 2020)
+  
+  dfw_counties <- c(
+    # MSA : Fort Worth–Arlington–Grapevine metropolitan division
+    'Johnson County', 'Parker County', 'Tarrant County', 'Wise County', 
+    # MSA : Dallas–Plano–Irving metropolitan division
+    'Collin County', 'Dallas County', 'Denton County', 'Ellis County', 
+    'Hunt County', 'Kaufman County', 'Rockwall County')
+  
+  # Make calls for education by (SEX, RACE, TRACT)
+  # ----------------------------------------------
+  ed <- data.frame()
+
+  for(year in years){
+    for(county in dfw_counties){
+
+      # make api call
+      ed.year.county <-
+        create_ed_by_sex_race_tract_df(county, year)
+
+      # combine
+      ed <- rbind(ed, ed.year.county)
+
+    }
+  }
+
+  # Make calls for education by (AGE, TRACT)
+  # ----------------------------------------
+  age <- data.frame()
+  
+  for(year in years){
+    for(county in dfw_counties){
+      
+      
+      # make api call
+      age.year.county <- 
+        create_ed_by_age_tract_df(county, year)
+      
+      # combine (bind_rows)
+      age <- rbind(age, age.year.county)
+      
+    }
+  }
+  
+  # Write to disk
+  # --------------
+  readr::write_excel_csv(ed, ed_filepath, delim = '\t')
+  readr::write_excel_csv(age, age_filepath, delim = '\t')
+
+  # Return both datasets
+  # --------------------
+  df <- list()
+  df$ed <- ed
+  df$age <- age
+  
+  return(df)
+
+}
+
+
+# Load educational attainment data
+# --------------------------------
+if(file.exists(ed_filepath) & file.exists(age_filepath)){
+
   ed <- vroom::vroom(ed_filepath,
                      col_types = cols(tract=col_character()))
-} else{
-  ed <- create_ed_by_tract_df()
   
-  # write out
-  readr::write_excel_csv(ed, ed_filepath)
+  age <- vroom::vroom(age_filepath,
+                     col_types = cols(tract=col_character()))
+  
+} else{
+  df <- make_all_education_api_calls()
 }
 
-# Get age (national) category data
-# --------------------------------
-if(file.exists(age_national_filepath)){
-  age <- vroom::vroom(age_national_filepath)
-} else {
-  age <- create_age_df()
-  
-  # write out
-  readr::write_excel_csv(age, age_national_filepath)
-}
+
 
 
 # Get poverty status data
 # -----------------------
-if(file.exists(pov_filepath)){
-  pov <- vroom::vroom(pov_filepath,
-                     col_types = cols(tract=col_character()))
-} else {
-  pov <- create_poverty_by_tract_df()
-  
-  # write out
-  readr::write_excel_csv(pov, pov_filepath)
-}
+# if(file.exists(pov_filepath)){
+#   pov <- vroom::vroom(pov_filepath,
+#                      col_types = cols(tract=col_character()))
+# } else {
+#   # MSA : Fort Worth–Arlington–Grapevine metropolitan division
+#   pov.johnson <- create_poverty_by_tract_df('Johnson County')
+#   pov.parker <- create_poverty_by_tract_df('Parker County')
+#   pov.tarrant <- create_poverty_by_tract_df('Tarrant County')
+#   pov.wise <- create_poverty_by_tract_df('Wise County')
+# 
+#   # MSA : Dallas–Plano–Irving metropolitan division
+#   pov.collin <- create_poverty_by_tract_df('Collin County')
+#   pov.dallas <- create_poverty_by_tract_df('Dallas County')
+#   pov.denton <- create_poverty_by_tract_df('Denton County')
+#   pov.ellis <- create_poverty_by_tract_df('Ellis County')
+#   pov.hunt <- create_poverty_by_tract_df('Hunt County')
+#   pov.kaufman <- create_poverty_by_tract_df('Kaufman County')
+#   pov.rockwall <- create_poverty_by_tract_df('Rockwall County')
+# 
+#   pov <- rbind(pov.johnson, pov.parker, pov.tarrant, pov.wise,
+#               pov.collin, pov.dallas, pov.denton, pov.ellis,
+#               pov.hunt, pov.kaufman, pov.rockwall)
+#   
+#   rm(list = c('pov.johnson', 'pov.parker', 'pov.tarrant', 'pov.wise',
+#               'pov.collin', 'pov.dallas', 'pov.denton', 'pov.ellis',
+#               'pov.hunt', 'pov.kaufman', 'pov.rockwall'))
+#   # write out
+#   readr::write_excel_csv(pov, pov_filepath)
+# }
+
 
 ```
 
@@ -604,6 +737,8 @@ if(file.exists(pov_filepath)){
 ##### Absolute numbers
 ```{r message=FALSE, warning=FALSE}
 dat <- ed %>% 
+  filter(year == 2020) %>% 
+  filter(county=='Tarrant County') %>% 
   filter(tract == 1115.67) %>% 
   filter(sex == 'Male') %>% 
   filter(race %in% c('white', 'black', 'hispanic')) %>% 
@@ -630,11 +765,12 @@ ggplot(dat,
   labs(
     x = 'Highest Level of Education Achieved',
     y = 'Number of persons',
-    title = 'Male -- Tract 1115.67',
+    title = 'Male -- Tract 1115.67 (year: 2020, county: Tarrant)',
     fill = 'Race/Ethnicity') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
 ```
+
 
 <p></p>
 ##### Proportions
@@ -652,7 +788,7 @@ ggplot(dat,
   labs(
     x = 'Highest Level of Education Achieved',
     y = 'Proportion',
-    title = 'Male -- Tract 1115.67',
+    title = 'Male -- Tract 1115.67 (year: 2020, county: Tarrant)',
     fill = 'Race/Ethnicity') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
@@ -685,8 +821,8 @@ in Census tract 1141.03 during 2020 (given their age at run-time)?
 
 estimates <- ed %>% 
   filter(education != 'Total') %>% 
-  select(education, sex, race, tract, estimate, moe, proportion, proportion_moe) %>% 
-  left_join(age %>% select(education, agecat, proportion, proportion_moe) %>% 
+  select(year, county, tract, education, sex, race, estimate, moe, proportion, proportion_moe) %>% 
+  left_join(age %>% select(year, county, tract, education, agecat, proportion, proportion_moe) %>% 
               rename(p_age = proportion, p_age_moe = proportion_moe)) %>% 
   mutate(p = proportion*p_age,
          p_moe = abs(sqrt( (proportion^2 * p_age_moe^2) + (p_age^2 * proportion_moe^2) ))
@@ -695,6 +831,8 @@ estimates <- ed %>%
 
 # example
 dat <- estimates %>% 
+  filter(year == 2020) %>% 
+  filter(county=='Tarrant County') %>% 
   filter(tract == 1115.67) %>% 
   filter(sex == 'Male') %>% 
   filter(race %in% c('white', 'black', 'hispanic')) %>% 
@@ -724,7 +862,7 @@ ggplot(dat,
   labs(
     x = 'Highest Level of Education Achieved',
     y = 'Proportion',
-    title = 'Male -- Tract 1115.67',
+    title = 'Male -- Tract 1115.67 (year 2020, county=Tarrant)',
     fill = 'Age Category') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
@@ -741,18 +879,10 @@ be derived as described in the ACS handbook.
 What about for a female?
 ```{r message=FALSE}
 
-estimates <- ed %>% 
-  filter(education != 'Total') %>% 
-  select(education, sex, race, tract, estimate, moe, proportion, proportion_moe) %>% 
-  left_join(age %>% select(education, agecat, proportion, proportion_moe) %>% 
-              rename(p_age = proportion, p_age_moe = proportion_moe)) %>% 
-  mutate(p = proportion*p_age,
-         p_moe = abs(sqrt( (proportion^2 * p_age_moe^2) + (p_age^2 * proportion_moe^2) ))
-  ) %>% 
-  mutate(agecat = ifelse(agecat == '25-29', '25-34', agecat))
-
 # example
 dat <- estimates %>% 
+  filter(year == 2020) %>% 
+  filter(county=='Tarrant County') %>% 
   filter(tract == 1115.67) %>% 
   filter(sex == 'Female') %>% 
   filter(race %in% c('white', 'black', 'hispanic')) %>% 
@@ -782,7 +912,7 @@ ggplot(dat,
   labs(
     x = 'Highest Level of Education Achieved',
     y = 'Proportion',
-    title = 'Female -- Tract 1115.67',
+    title = 'Female -- Tract 1115.67 (year: 2020, county: Tarrant)',
     fill = 'Age Category') + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5),
         plot.title = element_text(hjust = 0.5))
@@ -805,7 +935,8 @@ The data for these plots derives entirely from tables
 [B17001*](https://data.census.gov/cedsci/table?q=B17001).  
 
 ##### Males
-```{r message=FALSE, warning=FALSE}
+Updated API calls have not yet been made (by year or with additional counties).
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 dat <- pov %>% 
   filter(poverty_status != 'Total') %>% 
   # example data
@@ -844,7 +975,9 @@ status).
 
 <p></p>
 ##### Females
-```{r message=FALSE, warning=FALSE}
+Updated API calls have not yet been made (by year or with additional counties).
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 dat <- pov %>% 
   filter(poverty_status != 'Total') %>% 
   # example data
